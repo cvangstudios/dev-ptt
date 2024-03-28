@@ -1,8 +1,9 @@
 import re
 import argparse
+import textfsm
 
 
-def extract_connected_interfaces(log_file):
+def extract_connected_interfaces(log_file, device_type):
     connected_interfaces = []
     with open(log_file, 'r') as file:
         log_content = file.read()
@@ -12,33 +13,46 @@ def extract_connected_interfaces(log_file):
         if match:
             hostname = match.group(1)
         else:
+            print("Hostname not found in the log file.")
             return connected_interfaces
 
-        # Find the "show int status | inc connected" command output
-        match = re.search(rf'{hostname}# show int status \| inc connected\n(.*?)\n{hostname}#', log_content, re.DOTALL)
+        # Find the "show interface status" command output
+        match = re.search(rf'{hostname}# show interface status\n(.*?)\n{hostname}#', log_content, re.DOTALL)
         if match:
             output = match.group(1)
-            print("Connected interfaces output:")
-            print(output)
-            lines = output.strip().split('\n')
-            for line in lines:
-                interface = line.split()[0]
-                connected_interfaces.append(interface)
+            print(f"Found 'show interface status' output:\n{output}\n")
+            template_name = 'cisco_nxos_show_interface_status.textfsm' if device_type == 'nxos' else 'cisco_ios_show_interfaces_status.textfsm'
+            template_path = r"C:/Users/Cher/Desktop/PingApplication/venv/lib/site-packages/ntc_templates/templates/" + template_name
+            with open(template_path, 'r') as template_file:
+                template = textfsm.TextFSM(template_file)
+                parsed_output = template.ParseText(output)
+                print(f"Parsed output:\n{parsed_output}\n")
+                for interface_data in parsed_output:
+                    print(f"Interface data: {interface_data}")
+                    if interface_data[2] == 'connected':
+                        connected_interfaces.append(interface_data[0])
+                        print(f"Connected interface found: {interface_data[0]}")
+        else:
+            print("No 'show interface status' output found in the log file.")
 
     return connected_interfaces
 
 
-def translate_interface_name(interface):
-    if interface.startswith("Eth"):
-        return interface.replace("Eth", "Ethernet")
-    elif interface.startswith("Gi"):
-        return interface.replace("Gi", "GigabitEthernet")
-    elif interface.startswith("Hu"):
-        return interface.replace("Hu", "HundredGigabitEthernet")
-    elif interface.startswith("Te"):
-        return interface.replace("Te", "TenGigabitEthernet")
-    else:
-        return interface
+def translate_interface_name(short_name):
+    translation_map = {
+        "Eth": "Ethernet",
+        "Gi": "GigabitEthernet",
+        "Te": "TenGigabitEthernet",
+        "Fo": "FortyGigabitEthernet",
+        "Tw": "TwoGigabitEthernet",
+        "Fi": "FiveGigabitEthernet",
+        "Twe": "TwentyFiveGigabitEthernet",
+        "Hu": "HundredGigabitEthernet"
+    }
+    for short_form, full_form in translation_map.items():
+        if short_name.startswith(short_form):
+            return short_name.replace(short_form, full_form, 1)  # Replace first occurrence
+    return short_name  # Return original if no translation found
 
 
 def extract_interface_configs(log_file, connected_interfaces):
@@ -53,7 +67,8 @@ def extract_interface_configs(log_file, connected_interfaces):
             for interface in connected_interfaces:
                 # Extract the configuration section for each connected interface
                 interface_name = translate_interface_name(interface)
-                pattern = rf'interface {re.escape(interface_name)}\n(.*?)(?=\ninterface|\Z)'
+                print(f"Searching for interface: {interface_name}")
+                pattern = rf'interface {interface_name}\n(.*?)(?=\ninterface|\Z)'
                 match = re.search(pattern, output, re.DOTALL)
                 if match:
                     config = match.group(1).strip()
@@ -61,6 +76,8 @@ def extract_interface_configs(log_file, connected_interfaces):
                     print(f"Configuration found for interface: {interface_name}")
                 else:
                     print(f"Configuration not found for interface: {interface_name}")
+        else:
+            print("No 'show run' output found in the log file.")
 
     return interface_configs
 
@@ -74,10 +91,12 @@ def main():
     parser = argparse.ArgumentParser(description='Extract connected interface configurations from a Cisco log file.')
     parser.add_argument('log_file', help='Path to the Cisco log file')
     parser.add_argument('output_file', help='Path to the output text file')
+    parser.add_argument('device_type', choices=['nxos', 'ios'], help='Device type: nxos or ios')
 
     args = parser.parse_args()
 
-    connected_interfaces = extract_connected_interfaces(args.log_file)
+    connected_interfaces = extract_connected_interfaces(args.log_file, args.device_type)
+    print(f"Connected interfaces: {connected_interfaces}")
     interface_configs = extract_interface_configs(args.log_file, connected_interfaces)
     save_configs_to_file(interface_configs, args.output_file)
 
