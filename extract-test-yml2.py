@@ -18,6 +18,8 @@ def extract_connected_interfaces(log_file):
         match = re.search(rf'{hostname}# show int status \| inc connected\n(.*?)\n{hostname}#', log_content, re.DOTALL)
         if match:
             output = match.group(1)
+            print("Connected interfaces output:")
+            print(output)
             lines = output.strip().split('\n')
             for line in lines:
                 interface = line.split()[0]
