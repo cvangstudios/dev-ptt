@@ -1,0 +1,91 @@
+##### Production VERSION 1.5
+
+template: 93108-template-prod-ver1-5.j2  # DO not edit the template
+
+################################# GLOBAL CONFIGURATIONS #############################################
+#####################################################################################################
+####### THIS SECTION WILL DEFINE HOW THE FULL CONFIG GETS BUILT OUT.
+####### Config_Type FULL will by default build an Inband shipping config
+####### To configure an OOB Mgmt shipping config fill out the oob_mgmt section
+####### If configuring an Inband MGMT shipping config, leave OOB_MGMT Section Empty
+####### And fill out the Inband MGMT Section
+####### Leave this section blank if you are just doing at PTD/PTU/VLAN ADD/Configuring Trunks
+
+hostname: Switch-01   # Set the hostname for the device to be configured
+
+#****************************************************************************************************
+############################# PAY ATTENTION TO THIS SECTION!!!! #####################################
+config_type:     # Set this setting to "full" if you want to generate a full configuration for 93108 NXOS full shipping config
+                 # If you just want to Generate Vlans from the GLOBAL CONFIG then set this value to "vlan"
+############################# PAY ATTENTION TO THIS SECTION!!!! #####################################
+
+oob_mgmt:             # Fill section to generate an oob mangaement config, leaving empty will default to inband mgmt ship config
+  - ipv4_ipaddr:
+    oob_mgmt_int_desc:
+    ipv4_def_gw:
+
+inband_mgmt:          # If config_Type is full, by default Inband mgmt will be used.  Enter values below if using full config.
+  - mgmt_vlan:        # Vlan/SVI for management config
+    ipv4_ipaddr:      # ip address of inband management interface
+    description:      # inband management interface description
+
+vlans:                # THIS SECTION CAN BE BUILT AS A STANDALONE VLAN CONFIG.  ENSURE CONFIG_TYPE is set to "vlan" for stand alone
+  - id: 111
+    name: vlan 111
+  - id: 112
+    name: vlan 112
+  - id: 113
+    name: vlan 113
+
+################################## END GLOBAL CONFIGURATIONS #########################################
+#****************************************************************************************************#
+
+
+
+#****************************************************************************************************#
+#################################### PORT CONFIGURATIONS #############################################
+#### Port configurations can be built without the Global configuration so they can be used for PTD/PTU
+#### VLAN adds to trunks, configure trunks
+#### To generate only port configurations below ensure "config_type" in Global Configurations is blank
+#### Unused Interfaces can be used for PTD.
+#### Downlinks can be used for PTU
+#### Uplinks can be used to configured ports/trunks
+
+interfaces:          #! Leave Empty
+  unused:            #################! UNUSED Interfaces can be used to build PTD configs
+    - port: 1-10
+      fex: 103                   # Fex is Optional, If the ports belongs to fex then add fex module #
+      service-policy: QOS-IN     # QoS is Optional, If port requires QoS policy add here, if not, leave blank
+    - port: 11-20                # Port can be of singular or range.  Ex. 'port: 1' or 'port: 1-25'
+      service-policy: QOS-IN
+    - port: 45
+      fex: 101
+    - port: 43
+      fex:
+  uplinks:           #################! UPLINKS Interfaces can be used to build Trunks/Port Channels
+    - port:                #! CHANGE to appropriate interface
+      description:         #! CHANGE description to properly reflect
+    - port:                #! CHANGE to appropriate interface
+      description:         #! CHANGE description to properly reflect
+    - port_channel:        #! THIS SHOULD NOT BE CHANGED
+      description:         #! CHANGE description to properly reflect
+      native_vlan:         #! CHANGE native to match correct native vlan
+  downlinks:         #################! DOWNLINKS Interfaces can be used to build PTD configs
+    - port: 5
+      description: mn-dc-test02
+      fex: 103
+      vlan: 100
+      service-policy: QOS-IN
+    - port: 8
+      fex: 104
+      vlan: 300
+      description: mn-dc-test02
+  consolePorts:      #################! ConsolePorts are used to build new Console connections
+    - console_server:        #! Specify the Console server the new port is on
+      port:                  #! Specify the Port
+      cisco_pinout:          #! This value has to be yes or no
+      hostname:              #! This is the port name for the console.  It should be the hostname of this device.
+
+#****************************************************************************************************#
+#################################### END PORT CONFIGURATIONS #########################################
+#****************************************************************************************************#

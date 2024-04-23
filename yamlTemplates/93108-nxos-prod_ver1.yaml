@@ -1,0 +1,46 @@
+##### Production version 1
+
+template: 93108-template-prod_ver1.j2
+
+hostname: Switch-01      # Set the hostname for the device
+
+config_type:       # Set this setting to "full" if you want to generate a full configuration for 93108 NXOS full shipping config
+oob_mgmt:          # Set setting to "true" to generate an inband mangaement config
+inband_mgmt:       # set setting to "true" to generate an oob management config
+
+#### WHEN config_type is empty, it will only generate the port configurations below
+#### so that it can used for PTD/PTU configs.  Unused can be used for PTD.  Downlinks, can be used for PTU
+
+interfaces:                      #! Leave Empty
+  unused:                        #! Leave Empty
+    - port: 1-10
+      fex: 103
+      service-policy: QOS-IN     # If the ports require a QoS policy it can be added here, if not, leave blank
+    - port: 11-20                # Port can be of singular or range.  Ex. 'port: 1' or 'port: 1-25'
+      service-policy: QOS-IN
+    - port: 45
+      fex: 101
+    - port: 43
+      fex: 102
+  uplinks:             #! Leave Empty
+    - port:          #! CHANGE to appropriate interface
+      description:     #! CHANGE description to properly reflect
+    - port:          #! CHANGE to appropriate interface
+      description:     #! CHANGE description to properly reflect
+    - port_channel:        #! THIS SHOULD NOT BE CHANGED
+      description:         #! CHANGE description to properly reflect
+      native_vlan:       #! CHANGE native to match correct native vlan
+  downlinks:           #! Leave Empty
+    - port: 5
+      description: mn-svdc-dfx02
+      fex: 103
+      vlan: 100
+      service-policy: QOS-IN
+    - port: 8
+      fex: 104
+      vlan: 300
+      description: mn-svdc-dfy02
+  consolePorts:        #! Leave Empty
+    - port: 1
+      cisco_pinout: yes  #! This value has to be yes or no
+      hostname:  mn-svdc-dfy02      #! This is the port name for the console

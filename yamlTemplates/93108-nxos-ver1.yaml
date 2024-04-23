@@ -1,0 +1,40 @@
+##### WORKING VERSION 1.0
+
+template: 93108-template-ver3.j2
+
+hostname: Switch-01      # Set the hostname for the device
+
+config_type:       # Set this setting to "full" if you want to generate an inband 93108 NXOS full shipping config
+
+#### WHEN config_type is empty, it will only generate the port configurations below
+#### so that it can used for PTD/PTU configs
+
+interfaces:                      #Not to be filled
+  unused:                        #Not to be filled
+    - port: 1-10
+      fex: 103
+      service-policy: QOS-IN     # If the ports require a QoS policy it can be added here, if not, leave blank
+    - port: 11-20                # Port can be of singular or range.  Ex. 'port: 1' or 'port: 1-25'
+      service-policy: QOS-IN
+    - port: 45
+      fex: 101
+    - port: 43
+      fex: 102
+  uplinks:
+    - port: 51         #! CHANGE to appropriate interface
+      description:     #! CHANGE description to properly reflect
+    - port: 52         #! CHANGE to appropriate interface
+      description:     #! CHANGE description to properly reflect
+    - port_channel: 7       #! THIS SHOULD NOT BE CHANGED
+      description:          #! CHANGE description to properly reflect
+      native_vlan: 7        #! CHANGE native to match correct native vlan
+  downlinks:
+    - port: 5
+      description: test
+      fex: 103
+      vlan: 100
+      service-policy: QOS-IN
+    - port: 8
+      fex: 104
+      vlan: 300
+      description: test

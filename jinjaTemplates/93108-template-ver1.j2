@@ -1,0 +1,155 @@
+########## WORKING VERSION 1.0
+
+hostname {{ hostname }}
+!
+!
+{% if config_type == "full" %}
+cfs eth distribute
+!
+no feature ssh
+ssh key rsa 2048 force
+feature tacacs+
+no feature bash-shell
+feature udld
+feature interface-vlan
+feature lacp
+feature lldp
+feature vpc
+feature ssh
+!
+!
+banner motd $
+You are attempting to access a privately owned network
+Any unauthorized access is strictly prohibited.
+$
+!
+username admin password test role network-admin
+!
+!
+ip domaine-name infra.acme.net
+!
+!
+no ip domain-lookup
+!
+clock timezone gmt 0 0
+!
+line vty
+  exec-timeout 60
+line console
+  exec-timeout 60
+!
+!
+no hardware access-list update atomic
+!
+!TCAM SETTINGS
+hardware access-list tcam region ing-racl 256
+hardware access-list tcam region ing-racl 256
+hardware access-list tcam region ing-racl 256
+hardware access-list tcam region ing-racl 256
+hardware access-list tcam region ing-racl 256
+hardware access-list tcam region ing-racl 256
+hardware access-list tcam region ing-racl 256
+hardware access-list tcam region ing-racl 256
+hardware access-list tcam region ing-racl 256
+hardware access-list tcam region ing-racl 256
+hardware access-list tcam region ing-racl 256
+hardware access-list tcam region ing-racl 256
+!
+!
+interface mgmt0
+ description not_used_inband
+ shutdown force
+!
+! MGMT Subnet: mgmt vlan -- mgmt subnet ipv4
+!
+interface vlan 13
+  description mgmt_ipadd
+  ip address 1.1.1.1 255.255.255.0
+  no shutdown
+!
+!SNMP
+!
+snmp-server community xxxxx group network-operator
+snmp-server community xxxxx group network-admin
+snmp-server location xxxxx
+!
+!
+vlan 7
+ name 7
+vlan 13
+ name 13
+vlan 999
+ name UNUSED_PORTS
+!
+!
+policy-map type qos QOS-IN
+!
+ip route 0.0.0.0/0 x.x.x.x
+{% endif %}
+!
+{% for type, interfaces in interfaces.items() -%}
+{%   if type == 'unused' -%}
+
+########### UNUSED INTERFACES ################
+
+{%     for interface in interfaces if interface.port -%}
+{%       if 'fex' in interface %}
+interface ethernet{{ interface.fex }}/1/{{ interface.port }}
+{%       else %}
+interface ethernet1/{{ interface.port }}
+{%       endif %}  description UNUSED
+  switchport
+  switchport mode access
+  switchport access vlan 999
+  spanning-tree port type edge
+  spanning-tree bpduguard enable
+{%       if 'service-policy' in interface and interface['service-policy'] %}  service-policy type qos input {{ interface['service-policy'] }} no-stats
+{%       endif %}  mtu 9216
+  shutdown
+  !
+{%     endfor -%}
+{%   elif type == 'uplinks' -%}
+
+########### UPLINK INTERFACES ################
+
+{%     for interface in interfaces if interface.port -%}
+interface ethernet1/{{ interface.port }}
+  description {{ interface.description }}
+  channel-group 7 force mode active
+  no shutdown
+!
+{%     endfor -%}
+{%     for interface in interfaces if interface.port_channel -%}
+interface Port-channel7
+  description {{ interface.description }}
+  switchport
+  switchport mode trunk
+  switchport trunk native vlan {{ interface.native_vlan }}
+  switchport trunk allowed vlan all
+  mtu 9216
+  no shutdown
+!
+{%     endfor -%}
+{%   elif type == 'downlinks' -%}
+
+########### DOWNLINK INTERFACES ################
+
+{%     for interface in interfaces if interface.port -%}
+{%       if 'fex' in interface %}
+interface ethernet{{ interface.fex }}/1/{{ interface.port }}
+{%       else %}
+interface ethernet1/{{ interface.port }}
+{%       endif %}  description {{ interface.description }}
+  switchport
+  switchport mode access
+  switchport access vlan {{ interface.vlan }}
+  spanning-tree port type edge
+  spanning-tree bpduguard enable
+{%       if 'service-policy' in interface and interface['service-policy'] %}  service-policy type qos input {{ interface['service-policy'] }} no-stats
+{%       endif %}  mtu 9216
+  shutdown
+  !
+
+{%     endfor -%}
+{%   endif -%}
+{% endfor -%}

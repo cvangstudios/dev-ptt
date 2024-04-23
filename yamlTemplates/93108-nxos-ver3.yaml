@@ -1,0 +1,76 @@
+##### testing VERSION 3
+
+template: 93108-template-ver3.j2
+
+hostname: Switch-01      # Set the hostname for the device
+
+
+############################ GLOBAL CONFIGURATIONS ##################################################
+####### THIS SECTION WILL DEFINE HOW THE FULL CONFIG GETS BUILT OUT.
+####### Config_Type FULL will by default build an Inband shipping config
+####### To configured an OOB Mgmt shipping config fill out the oob_mgmt section
+####### Leave this section blank if you are just doing at PTD/PTU/VLAN ADD/Configuring Trunks
+
+config_type:       # Set this setting to "full" if you want to generate a full configuration for 93108 NXOS full shipping config
+                   # If you just want to Generate Vlans set this value to "vlan"
+
+oob_mgmt:             # to generate an oob mangaement config, fill in values else default will be inband mgmt config
+  - ipv4_ipaddr: 10.1.1.1/24
+    oob_mgmt_int_desc: oob
+    ipv4_def_gw: 10.1.1.254
+
+inband_mgmt:        # If config Type is full, by default Inband mgmt will be used.  Enter values below if using full config.
+  - mgmt_vlan:      # Vlan/SVI for management config
+    ipv4_ipaddr:    # ip address of inband management interface
+    description:    # inband management interface description
+
+vlans:        # Set this value to true if you want to build vlans.
+  - id: 13
+    name: vlan_13
+  - id: 10
+    name: vlan_10
+  - id: 20
+    name: vlan_20
+
+############################ END GLOBAL CONFIGURATIONS ##################################################
+
+
+#### To generate only port configurations below ensure "config_type" in Global Configurations is blanks
+#### Doing so this section can be used for PTD/PTU configs.
+#### Unused Interfaces can be used for PTD.
+#### Downlinks can be used for PTU
+#### Uplinks can be used to configured ports/trunks
+
+interfaces:                      #! Leave Empty
+  unused:                        #! Leave Empty
+    - port: 1-10
+      fex: 103
+      service-policy: QOS-IN     # If the ports require a QoS policy it can be added here, if not, leave blank
+    - port: 11-20                # Port can be of singular or range.  Ex. 'port: 1' or 'port: 1-25'
+      service-policy: QOS-IN
+    - port: 45
+      fex: 101
+    - port: 43
+      fex: 102
+  uplinks:             #! Leave Empty
+    - port:          #! CHANGE to appropriate interface
+      description:     #! CHANGE description to properly reflect
+    - port:          #! CHANGE to appropriate interface
+      description:     #! CHANGE description to properly reflect
+    - port_channel:        #! THIS SHOULD NOT BE CHANGED
+      description:         #! CHANGE description to properly reflect
+      native_vlan:       #! CHANGE native to match correct native vlan
+  downlinks:           #! Leave Empty
+    - port: 5
+      description: mn-dc-test02
+      fex: 103
+      vlan: 100
+      service-policy: QOS-IN
+    - port: 8
+      fex: 104
+      vlan: 300
+      description: mn-dc-test02
+  consolePorts:        #! Leave Empty
+    - port:
+      cisco_pinout:   #! This value has to be yes or no
+      hostname:        #! This is the port name for the console

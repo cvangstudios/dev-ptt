@@ -1,0 +1,90 @@
+# Configuration generated using the following versions of code:
+# Python Script: config-gen-prod_ver1-5.py
+# YAML: 93108-nxos-prod_ver1-5.yaml
+# Jinja2 Template: 93108-template-prod-ver1-5.j2
+
+hostname Switch-01
+
+
+
+
+
+################# INTERFACE CONFIGURATIONS ######################
+
+########### Switch-01 UNUSED/PTD INTERFACES ################
+
+interface ethernet103/1/1-10
+  description UNUSED
+  switchport
+  switchport mode access
+  switchport access vlan 999
+  spanning-tree port type edge
+  spanning-tree bpduguard enable
+  service-policy type qos input QOS-IN no-stats
+  mtu 9216
+  shutdown
+  !
+
+interface ethernet1/11-20
+  description UNUSED
+  switchport
+  switchport mode access
+  switchport access vlan 999
+  spanning-tree port type edge
+  spanning-tree bpduguard enable
+  service-policy type qos input QOS-IN no-stats
+  mtu 9216
+  shutdown
+  !
+
+interface ethernet101/1/45
+  description UNUSED
+  switchport
+  switchport mode access
+  switchport access vlan 999
+  spanning-tree port type edge
+  spanning-tree bpduguard enable
+  mtu 9216
+  shutdown
+  !
+
+interface ethernet1/43
+  description UNUSED
+  switchport
+  switchport mode access
+  switchport access vlan 999
+  spanning-tree port type edge
+  spanning-tree bpduguard enable
+  mtu 9216
+  shutdown
+  !
+############ Switch-01 UPLINK/TRUNK INTERFACES ################
+!
+!
+!
+############ Switch-01 DOWNLINK/PTU INTERFACES ################
+
+interface ethernet103/1/5
+  description mn-dc-test02
+  switchport
+  switchport mode access
+  switchport access vlan 100
+  spanning-tree port type edge
+  spanning-tree bpduguard enable
+  service-policy type qos input QOS-IN no-stats
+  mtu 9216
+  no shutdown
+  !
+
+interface ethernet104/1/8
+  description mn-dc-test02
+  switchport
+  switchport mode access
+  switchport access vlan 300
+  spanning-tree port type edge
+  spanning-tree bpduguard enable
+  mtu 9216
+  no shutdown
+  !
+!
+##
