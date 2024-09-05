@@ -1,0 +1,18 @@
+Value INTERFACE (\S+)
+Value LINK_STATUS (\S+)
+Value PROTOCOL_STATUS (\S+)
+Value HARDWARE_TYPE (.*)
+Value ADDRESS ([a-fA-F0-9]{4}\.[a-fA-F0-9]{4}\.[a-fA-F0-9]{4})
+Value BIA ([a-fA-F0-9]{4}\.[a-fA-F0-9]{4}\.[a-fA-F0-9]{4})
+Value DESCRIPTION (.*)
+Value IP_ADDRESS (\S+)
+Value MTU (\d+)
+
+Start
+  ^${INTERFACE} is ${LINK_STATUS}
+  ^${PROTOCOL_STATUS} is ${PROTOCOL_STATUS}
+  ^\s+Hardware is ${HARDWARE_TYPE}
+  ^\s+Hardware address is ${ADDRESS} \(bia ${BIA}\)
+  ^\s+Description: ${DESCRIPTION}
+  ^\s+Internet address is ${IP_ADDRESS}
+  ^\s+MTU ${MTU} bytes -> Record
