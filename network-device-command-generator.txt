@@ -37,19 +37,19 @@ Sub CreateDeviceDictionaries()
         If Not nearEndDevices.Exists(nearEndDevice) Then
             Set deviceInfo = New Dictionary
             deviceInfo.Add "type", nearEndType
-            deviceInfo.Add "ports", New Collection
+            deviceInfo.Add "ports", New Dictionary
             nearEndDevices.Add nearEndDevice, deviceInfo
         End If
-        nearEndDevices(nearEndDevice)("ports").Add nearEndPort
+        nearEndDevices(nearEndDevice)("ports")(nearEndPort) = True
         
         ' Process Far End Device
         If Not farEndDevices.Exists(farEndDevice) Then
             Set deviceInfo = New Dictionary
             deviceInfo.Add "type", farEndType
-            deviceInfo.Add "ports", New Collection
+            deviceInfo.Add "ports", New Dictionary
             farEndDevices.Add farEndDevice, deviceInfo
         End If
-        farEndDevices(farEndDevice)("ports").Add farEndPort
+        farEndDevices(farEndDevice)("ports")(farEndPort) = True
     Next i
     
     Debug.Print "Device dictionaries created successfully."
@@ -116,12 +116,8 @@ Sub ProcessDevice(ByVal deviceInfo As Dictionary, ByVal deviceName As String, By
     ' Skip if device type is server
     If deviceType = "server" Then Exit Sub
     
-    ' Create interface list
-    interfaceList = ""
-    For Each port In deviceInfo("ports")
-        If interfaceList <> "" Then interfaceList = interfaceList & ","
-        interfaceList = interfaceList & CStr(port)
-    Next port
+    ' Create interface list (now using Dictionary keys to avoid duplicates)
+    interfaceList = Join(deviceInfo("ports").Keys, ",")
     
     ' Generate command list based on device type
     Select Case deviceType
