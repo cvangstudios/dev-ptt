@@ -60,6 +60,8 @@ Sub GenerateCommandLists()
     Dim deviceInfo As Dictionary
     Dim aristaCommands As String
     Dim ciscoCommands As String
+    Dim ws As Worksheet
+    Dim currentRow As Long
     
     ' Call the function to create device dictionaries
     Call CreateDeviceDictionaries
@@ -74,17 +76,40 @@ Sub GenerateCommandLists()
         Exit Sub
     End If
     
+    ' Create or clear the "Project Commands" sheet
+    On Error Resume Next
+    Set ws = ThisWorkbook.Worksheets("Project Commands")
+    On Error GoTo 0
+    
+    If ws Is Nothing Then
+        Set ws = ThisWorkbook.Worksheets.Add(After:=ThisWorkbook.Worksheets(ThisWorkbook.Worksheets.Count))
+        ws.Name = "Project Commands"
+    Else
+        ws.Cells.Clear
+    End If
+    
+    ' Set up headers
+    ws.Cells(1, 1).Value = "Device Name"
+    ws.Cells(1, 2).Value = "Device Type"
+    ws.Cells(1, 3).Value = "Commands"
+    ws.Range("A1:C1").Font.Bold = True
+    
+    currentRow = 2 ' Start from the second row
+    
     ' Process near-end devices
     For Each device In nearEndDevices.Keys
-        ProcessDevice nearEndDevices(device), CStr(device), aristaCommands, ciscoCommands
+        currentRow = ProcessDevice(nearEndDevices(device), CStr(device), aristaCommands, ciscoCommands, ws, currentRow)
     Next device
     
     ' Process far-end devices
     For Each device In farEndDevices.Keys
-        ProcessDevice farEndDevices(device), CStr(device), aristaCommands, ciscoCommands
+        currentRow = ProcessDevice(farEndDevices(device), CStr(device), aristaCommands, ciscoCommands, ws, currentRow)
     Next device
     
-    MsgBox "Command lists have been generated and added as new worksheets.", vbInformation
+    ' Auto-fit columns
+    ws.Columns("A:C").AutoFit
+    
+    MsgBox "Command lists have been generated in the 'Project Commands' sheet.", vbInformation
 End Sub
 
 Function ReadCommandFile(filePath As String) As String
@@ -102,21 +127,22 @@ Function ReadCommandFile(filePath As String) As String
     End If
 End Function
 
-Sub ProcessDevice(ByVal deviceInfo As Dictionary, ByVal deviceName As String, ByVal aristaTemplate As String, ByVal ciscoTemplate As String)
+Function ProcessDevice(ByVal deviceInfo As Dictionary, ByVal deviceName As String, ByVal aristaTemplate As String, ByVal ciscoTemplate As String, ByVal ws As Worksheet, ByVal startRow As Long) As Long
     Dim deviceType As String
     Dim interfaceList As String
     Dim commandList As String
-    Dim port As Variant
-    Dim ws As Worksheet
     Dim commandLines() As String
     Dim i As Long
     
     deviceType = LCase(CStr(deviceInfo("type")))
     
     ' Skip if device type is server
-    If deviceType = "server" Then Exit Sub
+    If deviceType = "server" Then
+        ProcessDevice = startRow
+        Exit Function
+    End If
     
-    ' Create interface list (now using Dictionary keys to avoid duplicates)
+    ' Create interface list (using Dictionary keys to avoid duplicates)
     interfaceList = Join(deviceInfo("ports").Keys, ",")
     
     ' Generate command list based on device type
@@ -126,27 +152,78 @@ Sub ProcessDevice(ByVal deviceInfo As Dictionary, ByVal deviceName As String, By
         Case "cisco"
             commandList = Replace(ciscoTemplate, "[interfaces]", interfaceList)
         Case Else
-            Exit Sub ' Skip unknown device types
+            ProcessDevice = startRow
+            Exit Function ' Skip unknown device types
     End Select
     
-    ' Create new worksheet for the device
+    ' Write device info
+    ws.Cells(startRow, 1).Value = deviceName
+    ws.Cells(startRow, 2).Value = deviceType
+    
+    ' Write commands
+    commandLines = Split(commandList, vbNewLine)
+    ws.Cells(startRow, 3).Value = Join(commandLines, vbNewLine)
+    
+    ' Apply word wrap to the commands cell
+    ws.Cells(startRow, 3).WrapText = True
+    
+    ' Return the next row to write to
+    ProcessDevice = startRow + 1
+End Function
+
+Sub CreateCommandGeneratorButton()
+    Dim ws As Worksheet
+    Dim btn As Button
+    
+    ' Use the "caw" sheet
+    Set ws = ThisWorkbook.Worksheets("caw")
+    
+    ' Add a button
+    Set btn = ws.Buttons.Add(100, 10, 150, 30)
+    
+    ' Set button properties
+    With btn
+        .OnAction = "GenerateCommandLists"
+        .Caption = "Generate Command Lists"
+        .Name = "CommandGeneratorButton"
+    End With
+    
+    MsgBox "Button added to the 'caw' sheet. Click it to generate command lists.", vbInformation
+End Sub
+
+Sub DeleteProjectCommandsSheet()
+    Dim ws As Worksheet
+    
+    Application.DisplayAlerts = False ' Suppress delete confirmation dialog
+    
     On Error Resume Next
-    Set ws = ThisWorkbook.Worksheets(deviceName)
+    Set ws = ThisWorkbook.Worksheets("Project Commands")
+    If Not ws Is Nothing Then
+        ws.Delete
+    End If
     On Error GoTo 0
     
-    If ws Is Nothing Then
-        Set ws = ThisWorkbook.Worksheets.Add(After:=ThisWorkbook.Worksheets(ThisWorkbook.Worksheets.Count))
-        ws.Name = deviceName
-    Else
-        ws.Cells.Clear ' Clear existing content if sheet already exists
-    End If
+    Application.DisplayAlerts = True ' Re-enable alerts
     
-    ' Write commands to the worksheet
-    commandLines = Split(commandList, vbNewLine)
-    For i = LBound(commandLines) To UBound(commandLines)
-        ws.Cells(i + 1, 1).Value = commandLines(i)
-    Next i
+    MsgBox "The 'Project Commands' sheet has been deleted.", vbInformation
+End Sub
+
+Sub CreateCleanupButton()
+    Dim ws As Worksheet
+    Dim btn As Button
     
-    ' Auto-fit column width
-    ws.Columns("A").AutoFit
+    ' Use the "caw" sheet
+    Set ws = ThisWorkbook.Worksheets("caw")
+    
+    ' Add a button
+    Set btn = ws.Buttons.Add(100, 50, 150, 30) ' Adjust position and size as needed
+    
+    ' Set button properties
+    With btn
+        .OnAction = "DeleteProjectCommandsSheet"
+        .Caption = "Clean Up Commands"
+        .Name = "CleanUpCommandsButton"
+    End With
+    
+    MsgBox "Cleanup button added to the 'caw' sheet. Click it to delete the 'Project Commands' sheet.", vbInformation
 End Sub
