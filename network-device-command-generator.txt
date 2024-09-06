@@ -13,6 +13,7 @@ Sub CreateDeviceDictionaries()
     Dim nearEndDevice As String, farEndDevice As String
     Dim nearEndType As String, farEndType As String
     Dim nearEndPort As String, farEndPort As String
+    Dim portStatus As String
     
     ' Set the source worksheet to "caw"
     Set ws = ThisWorkbook.Worksheets("caw")
@@ -32,6 +33,7 @@ Sub CreateDeviceDictionaries()
         farEndType = CStr(ws.Cells(i, "D").Value)
         farEndDevice = CStr(ws.Cells(i, "E").Value)
         farEndPort = CStr(ws.Cells(i, "F").Value)
+        portStatus = CStr(ws.Cells(i, "G").Value)
         
         ' Process Near End Device
         If Not nearEndDevices.Exists(nearEndDevice) Then
@@ -40,7 +42,7 @@ Sub CreateDeviceDictionaries()
             deviceInfo.Add "ports", New Dictionary
             nearEndDevices.Add nearEndDevice, deviceInfo
         End If
-        nearEndDevices(nearEndDevice)("ports")(nearEndPort) = True
+        nearEndDevices(nearEndDevice)("ports")(nearEndPort) = portStatus
         
         ' Process Far End Device
         If Not farEndDevices.Exists(farEndDevice) Then
@@ -49,7 +51,7 @@ Sub CreateDeviceDictionaries()
             deviceInfo.Add "ports", New Dictionary
             farEndDevices.Add farEndDevice, deviceInfo
         End If
-        farEndDevices(farEndDevice)("ports")(farEndPort) = True
+        farEndDevices(farEndDevice)("ports")(farEndPort) = portStatus
     Next i
     
     Debug.Print "Device dictionaries created successfully."
@@ -60,8 +62,9 @@ Sub GenerateCommandLists()
     Dim deviceInfo As Dictionary
     Dim aristaCommands As String
     Dim ciscoCommands As String
+    Dim avocentCommands As String
     Dim ws As Worksheet
-    Dim currentRow As Long
+    Dim currentColumn As Long
     
     ' Call the function to create device dictionaries
     Call CreateDeviceDictionaries
@@ -69,10 +72,11 @@ Sub GenerateCommandLists()
     ' Read command templates from files in the same directory as the workbook
     aristaCommands = ReadCommandFile(ThisWorkbook.Path & "\aristaCommands.txt")
     ciscoCommands = ReadCommandFile(ThisWorkbook.Path & "\ciscoCommands.txt")
+    avocentCommands = ReadCommandFile(ThisWorkbook.Path & "\avocentCommands.txt")
     
-    ' Check if both command files were read successfully
-    If aristaCommands = "" Or ciscoCommands = "" Then
-        MsgBox "Failed to read one or both command files. Please ensure they exist in the same directory as this workbook.", vbExclamation
+    ' Check if all command files were read successfully
+    If aristaCommands = "" Or ciscoCommands = "" Or avocentCommands = "" Then
+        MsgBox "Failed to read one or more command files. Please ensure they exist in the same directory as this workbook.", vbExclamation
         Exit Sub
     End If
     
@@ -88,26 +92,20 @@ Sub GenerateCommandLists()
         ws.Cells.Clear
     End If
     
-    ' Set up headers
-    ws.Cells(1, 1).Value = "Device Name"
-    ws.Cells(1, 2).Value = "Device Type"
-    ws.Cells(1, 3).Value = "Commands"
-    ws.Range("A1:C1").Font.Bold = True
-    
-    currentRow = 2 ' Start from the second row
+    currentColumn = 1 ' Start from the first column
     
     ' Process near-end devices
     For Each device In nearEndDevices.Keys
-        currentRow = ProcessDevice(nearEndDevices(device), CStr(device), aristaCommands, ciscoCommands, ws, currentRow)
+        currentColumn = ProcessDevice(nearEndDevices(device), CStr(device), aristaCommands, ciscoCommands, avocentCommands, ws, currentColumn)
     Next device
     
     ' Process far-end devices
     For Each device In farEndDevices.Keys
-        currentRow = ProcessDevice(farEndDevices(device), CStr(device), aristaCommands, ciscoCommands, ws, currentRow)
+        currentColumn = ProcessDevice(farEndDevices(device), CStr(device), aristaCommands, ciscoCommands, avocentCommands, ws, currentColumn)
     Next device
     
     ' Auto-fit columns
-    ws.Columns("A:C").AutoFit
+    ws.Columns.AutoFit
     
     MsgBox "Command lists have been generated in the 'Project Commands' sheet.", vbInformation
 End Sub
@@ -127,18 +125,21 @@ Function ReadCommandFile(filePath As String) As String
     End If
 End Function
 
-Function ProcessDevice(ByVal deviceInfo As Dictionary, ByVal deviceName As String, ByVal aristaTemplate As String, ByVal ciscoTemplate As String, ByVal ws As Worksheet, ByVal startRow As Long) As Long
+Function ProcessDevice(ByVal deviceInfo As Dictionary, ByVal deviceName As String, ByVal aristaTemplate As String, ByVal ciscoTemplate As String, ByVal avocentTemplate As String, ByVal ws As Worksheet, ByVal startColumn As Long) As Long
     Dim deviceType As String
     Dim interfaceList As String
     Dim commandList As String
     Dim commandLines() As String
     Dim i As Long
+    Dim currentRow As Long
+    Dim port As Variant
+    Dim portStatus As String
     
     deviceType = LCase(CStr(deviceInfo("type")))
     
     ' Skip if device type is server
     If deviceType = "server" Then
-        ProcessDevice = startRow
+        ProcessDevice = startColumn
         Exit Function
     End If
     
@@ -151,24 +152,48 @@ Function ProcessDevice(ByVal deviceInfo As Dictionary, ByVal deviceName As Strin
             commandList = Replace(aristaTemplate, "[interfaces]", interfaceList)
         Case "cisco"
             commandList = Replace(ciscoTemplate, "[interfaces]", interfaceList)
+        Case "console"
+            commandList = Replace(avocentTemplate, "[interfaces]", interfaceList)
         Case Else
-            ProcessDevice = startRow
+            ProcessDevice = startColumn
             Exit Function ' Skip unknown device types
     End Select
     
-    ' Write device info
-    ws.Cells(startRow, 1).Value = deviceName
-    ws.Cells(startRow, 2).Value = deviceType
+    ' Write device name as header
+    ws.Cells(1, startColumn).Value = deviceName
+    ws.Cells(1, startColumn).Font.Bold = True
+    
+    ' Write Device Info section
+    currentRow = 2
+    ws.Cells(currentRow, startColumn).Value = "Device Info:"
+    ws.Cells(currentRow, startColumn).Font.Bold = True
+    currentRow = currentRow + 1
+    
+    ws.Cells(currentRow, startColumn).Value = "Type: " & deviceType
+    currentRow = currentRow + 1
+    
+    ws.Cells(currentRow, startColumn).Value = "Ports:"
+    currentRow = currentRow + 1
+    
+    For Each port In deviceInfo("ports")
+        portStatus = deviceInfo("ports")(port)
+        ws.Cells(currentRow, startColumn).Value = "  " & port & " (" & portStatus & ")"
+        currentRow = currentRow + 1
+    Next port
+    
+    ' Write Commands header
+    ws.Cells(currentRow, startColumn).Value = "Commands:"
+    ws.Cells(currentRow, startColumn).Font.Bold = True
+    currentRow = currentRow + 1
     
     ' Write commands
     commandLines = Split(commandList, vbNewLine)
-    ws.Cells(startRow, 3).Value = Join(commandLines, vbNewLine)
+    For i = 0 To UBound(commandLines)
+        ws.Cells(currentRow + i, startColumn).Value = commandLines(i)
+    Next i
     
-    ' Apply word wrap to the commands cell
-    ws.Cells(startRow, 3).WrapText = True
-    
-    ' Return the next row to write to
-    ProcessDevice = startRow + 1
+    ' Return the next column to write to
+    ProcessDevice = startColumn + 1
 End Function
 
 Sub CreateCommandGeneratorButton()
