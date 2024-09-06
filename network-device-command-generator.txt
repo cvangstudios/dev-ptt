@@ -297,7 +297,7 @@ Sub CleanUpWorkbook()
     MsgBox "Cleanup complete. The 'Project Commands' sheet has been deleted, and the 'caw' sheet has been cleared except for headers.", vbInformation
 End Sub
 
-Sub CreateCleanupButton()
+Sub CreateCleanupWorkbookButton()
     Dim ws As Worksheet
     Dim btn As Button
     
