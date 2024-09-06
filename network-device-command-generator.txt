@@ -316,23 +316,3 @@ Sub CreateCleanupButton()
     
     MsgBox "Cleanup button added to the 'caw' sheet. Click it to delete the 'Project Commands' sheet and clear the 'caw' sheet.", vbInformation
 End Sub
-
-Sub CreateCleanupButton()
-    Dim ws As Worksheet
-    Dim btn As Button
-    
-    ' Use the "caw" sheet
-    Set ws = ThisWorkbook.Worksheets("caw")
-    
-    ' Add a button
-    Set btn = ws.Buttons.Add(100, 50, 150, 30) ' Adjust position and size as needed
-    
-    ' Set button properties
-    With btn
-        .OnAction = "DeleteProjectCommandsSheet"
-        .Caption = "Clean Up Commands"
-        .Name = "CleanUpCommandsButton"
-    End With
-    
-    MsgBox "Cleanup button added to the 'caw' sheet. Click it to delete the 'Project Commands' sheet.", vbInformation
-End Sub
