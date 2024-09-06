@@ -1,0 +1,39 @@
+Option Explicit
+
+Sub DeleteAllSheetsExceptCaw()
+    Dim ws As Worksheet
+    Dim i As Long
+    
+    Application.DisplayAlerts = False ' Suppress delete confirmation dialogs
+    
+    For i = ThisWorkbook.Worksheets.Count To 1 Step -1
+        Set ws = ThisWorkbook.Worksheets(i)
+        If LCase(ws.Name) <> "caw" Then
+            ws.Delete
+        End If
+    Next i
+    
+    Application.DisplayAlerts = True ' Re-enable alerts
+    
+    MsgBox "All sheets except 'caw' have been deleted.", vbInformation
+End Sub
+
+Sub CreateCleanupButton()
+    Dim ws As Worksheet
+    Dim btn As Button
+    
+    ' Use the "caw" sheet
+    Set ws = ThisWorkbook.Worksheets("caw")
+    
+    ' Add a button
+    Set btn = ws.Buttons.Add(100, 50, 150, 30) ' Adjust position and size as needed
+    
+    ' Set button properties
+    With btn
+        .OnAction = "DeleteAllSheetsExceptCaw"
+        .Caption = "Clean Up Sheets"
+        .Name = "CleanUpSheetsButton"
+    End With
+    
+    MsgBox "Cleanup button added to the 'caw' sheet. Click it to delete all sheets except 'caw'.", vbInformation
+End Sub
