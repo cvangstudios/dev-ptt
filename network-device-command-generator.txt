@@ -266,11 +266,13 @@ Sub CreateCommandGeneratorButton()
     MsgBox "Button added to the 'caw' sheet. Click it to generate command lists.", vbInformation
 End Sub
 
-Sub DeleteProjectCommandsSheet()
+Sub CleanUpWorkbook()
     Dim ws As Worksheet
+    Dim lastRow As Long, lastColumn As Long
     
     Application.DisplayAlerts = False ' Suppress delete confirmation dialog
     
+    ' Delete the "Project Commands" sheet if it exists
     On Error Resume Next
     Set ws = ThisWorkbook.Worksheets("Project Commands")
     If Not ws Is Nothing Then
@@ -278,9 +280,41 @@ Sub DeleteProjectCommandsSheet()
     End If
     On Error GoTo 0
     
+    ' Clear contents of the "caw" sheet, keeping only the headers
+    Set ws = ThisWorkbook.Worksheets("caw")
+    
+    ' Find the last used row and column
+    lastRow = ws.Cells(ws.Rows.Count, "A").End(xlUp).Row
+    lastColumn = ws.Cells(1, ws.Columns.Count).End(xlToLeft).Column
+    
+    ' Clear contents and formatting, but keep the headers
+    If lastRow > 1 Then
+        ws.Range(ws.Cells(2, 1), ws.Cells(lastRow, lastColumn)).Clear
+    End If
+    
     Application.DisplayAlerts = True ' Re-enable alerts
     
-    MsgBox "The 'Project Commands' sheet has been deleted.", vbInformation
+    MsgBox "Cleanup complete. The 'Project Commands' sheet has been deleted, and the 'caw' sheet has been cleared except for headers.", vbInformation
+End Sub
+
+Sub CreateCleanupButton()
+    Dim ws As Worksheet
+    Dim btn As Button
+    
+    ' Use the "caw" sheet
+    Set ws = ThisWorkbook.Worksheets("caw")
+    
+    ' Add a button
+    Set btn = ws.Buttons.Add(100, 50, 150, 30) ' Adjust position and size as needed
+    
+    ' Set button properties
+    With btn
+        .OnAction = "CleanUpWorkbook"
+        .Caption = "Clean Up Workbook"
+        .Name = "CleanUpWorkbookButton"
+    End With
+    
+    MsgBox "Cleanup button added to the 'caw' sheet. Click it to delete the 'Project Commands' sheet and clear the 'caw' sheet.", vbInformation
 End Sub
 
 Sub CreateCleanupButton()
