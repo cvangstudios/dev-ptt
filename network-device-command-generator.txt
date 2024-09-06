@@ -1,3 +1,130 @@
+Option Explicit
+
+' Add reference to Microsoft Scripting Runtime for Dictionary and FileSystemObject
+' Tools -> References -> Microsoft Scripting Runtime
+
+Private nearEndDevices As Dictionary
+Private farEndDevices As Dictionary
+
+Sub CreateDeviceDictionaries()
+    Dim ws As Worksheet
+    Dim lastRow As Long, i As Long
+    Dim deviceInfo As Dictionary
+    Dim nearEndDevice As String, farEndDevice As String
+    Dim nearEndType As String, farEndType As String
+    Dim nearEndPort As String, farEndPort As String
+    Dim portStatus As String
+    
+    ' Set the source worksheet to "caw"
+    Set ws = ThisWorkbook.Worksheets("caw")
+    
+    ' Find the last row with data
+    lastRow = ws.Cells(ws.Rows.Count, "A").End(xlUp).Row
+    
+    ' Initialize dictionaries
+    Set nearEndDevices = New Dictionary
+    Set farEndDevices = New Dictionary
+    
+    ' Loop through the data and populate dictionaries
+    For i = 2 To lastRow ' Start from row 2 to skip header
+        nearEndType = CStr(ws.Cells(i, "A").Value)
+        nearEndDevice = CStr(ws.Cells(i, "B").Value)
+        nearEndPort = CStr(ws.Cells(i, "C").Value)
+        farEndType = CStr(ws.Cells(i, "D").Value)
+        farEndDevice = CStr(ws.Cells(i, "E").Value)
+        farEndPort = CStr(ws.Cells(i, "F").Value)
+        portStatus = CStr(ws.Cells(i, "G").Value)
+        
+        ' Process Near End Device
+        If Not nearEndDevices.Exists(nearEndDevice) Then
+            Set deviceInfo = New Dictionary
+            deviceInfo.Add "type", nearEndType
+            deviceInfo.Add "ports", New Dictionary
+            nearEndDevices.Add nearEndDevice, deviceInfo
+        End If
+        nearEndDevices(nearEndDevice)("ports")(nearEndPort) = portStatus
+        
+        ' Process Far End Device
+        If Not farEndDevices.Exists(farEndDevice) Then
+            Set deviceInfo = New Dictionary
+            deviceInfo.Add "type", farEndType
+            deviceInfo.Add "ports", New Dictionary
+            farEndDevices.Add farEndDevice, deviceInfo
+        End If
+        farEndDevices(farEndDevice)("ports")(farEndPort) = portStatus
+    Next i
+    
+    Debug.Print "Device dictionaries created successfully."
+End Sub
+
+Sub GenerateCommandLists()
+    Dim device As Variant
+    Dim deviceInfo As Dictionary
+    Dim aristaCommands As String
+    Dim ciscoCommands As String
+    Dim avocentCommands As String
+    Dim ws As Worksheet
+    Dim currentColumn As Long
+    
+    ' Call the function to create device dictionaries
+    Call CreateDeviceDictionaries
+    
+    ' Read command templates from files in the same directory as the workbook
+    aristaCommands = ReadCommandFile(ThisWorkbook.Path & "\aristaCommands.txt")
+    ciscoCommands = ReadCommandFile(ThisWorkbook.Path & "\ciscoCommands.txt")
+    avocentCommands = ReadCommandFile(ThisWorkbook.Path & "\avocentCommands.txt")
+    
+    ' Check if all command files were read successfully
+    If aristaCommands = "" Or ciscoCommands = "" Or avocentCommands = "" Then
+        MsgBox "Failed to read one or more command files. Please ensure they exist in the same directory as this workbook.", vbExclamation
+        Exit Sub
+    End If
+    
+    ' Create or clear the "Project Commands" sheet
+    On Error Resume Next
+    Set ws = ThisWorkbook.Worksheets("Project Commands")
+    On Error GoTo 0
+    
+    If ws Is Nothing Then
+        Set ws = ThisWorkbook.Worksheets.Add(After:=ThisWorkbook.Worksheets(ThisWorkbook.Worksheets.Count))
+        ws.Name = "Project Commands"
+    Else
+        ws.Cells.Clear
+    End If
+    
+    currentColumn = 1 ' Start from the first column
+    
+    ' Process near-end devices
+    For Each device In nearEndDevices.Keys
+        currentColumn = ProcessDevice(nearEndDevices(device), CStr(device), aristaCommands, ciscoCommands, avocentCommands, ws, currentColumn)
+    Next device
+    
+    ' Process far-end devices
+    For Each device In farEndDevices.Keys
+        currentColumn = ProcessDevice(farEndDevices(device), CStr(device), aristaCommands, ciscoCommands, avocentCommands, ws, currentColumn)
+    Next device
+    
+    ' Auto-fit columns
+    ws.Columns.AutoFit
+    
+    MsgBox "Command lists have been generated in the 'Project Commands' sheet.", vbInformation
+End Sub
+
+Function ReadCommandFile(filePath As String) As String
+    Dim fso As New FileSystemObject
+    Dim txtFile As TextStream
+    
+    If fso.FileExists(filePath) Then
+        Set txtFile = fso.OpenTextFile(filePath, ForReading)
+        ReadCommandFile = txtFile.ReadAll
+        txtFile.Close
+    Else
+        MsgBox "Command file not found: " & filePath & vbNewLine & _
+               "Please ensure it exists in the same directory as this workbook.", vbExclamation
+        ReadCommandFile = ""
+    End If
+End Function
+
 Function ProcessDevice(ByVal deviceInfo As Dictionary, ByVal deviceName As String, ByVal aristaTemplate As String, ByVal ciscoTemplate As String, ByVal avocentTemplate As String, ByVal ws As Worksheet, ByVal startColumn As Long) As Long
     Dim deviceType As String
     Dim interfaceList As String
@@ -79,3 +206,60 @@ Function ProcessDevice(ByVal deviceInfo As Dictionary, ByVal deviceName As Strin
     ' Return the next column to write to
     ProcessDevice = startColumn + 1
 End Function
+
+Sub CreateCommandGeneratorButton()
+    Dim ws As Worksheet
+    Dim btn As Button
+    
+    ' Use the "caw" sheet
+    Set ws = ThisWorkbook.Worksheets("caw")
+    
+    ' Add a button
+    Set btn = ws.Buttons.Add(100, 10, 150, 30)
+    
+    ' Set button properties
+    With btn
+        .OnAction = "GenerateCommandLists"
+        .Caption = "Generate Command Lists"
+        .Name = "CommandGeneratorButton"
+    End With
+    
+    MsgBox "Button added to the 'caw' sheet. Click it to generate command lists.", vbInformation
+End Sub
+
+Sub DeleteProjectCommandsSheet()
+    Dim ws As Worksheet
+    
+    Application.DisplayAlerts = False ' Suppress delete confirmation dialog
+    
+    On Error Resume Next
+    Set ws = ThisWorkbook.Worksheets("Project Commands")
+    If Not ws Is Nothing Then
+        ws.Delete
+    End If
+    On Error GoTo 0
+    
+    Application.DisplayAlerts = True ' Re-enable alerts
+    
+    MsgBox "The 'Project Commands' sheet has been deleted.", vbInformation
+End Sub
+
+Sub CreateCleanupButton()
+    Dim ws As Worksheet
+    Dim btn As Button
+    
+    ' Use the "caw" sheet
+    Set ws = ThisWorkbook.Worksheets("caw")
+    
+    ' Add a button
+    Set btn = ws.Buttons.Add(100, 50, 150, 30) ' Adjust position and size as needed
+    
+    ' Set button properties
+    With btn
+        .OnAction = "DeleteProjectCommandsSheet"
+        .Caption = "Clean Up Commands"
+        .Name = "CleanUpCommandsButton"
+    End With
+    
+    MsgBox "Cleanup button added to the 'caw' sheet. Click it to delete the 'Project Commands' sheet.", vbInformation
+End Sub
