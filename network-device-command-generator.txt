@@ -26,12 +26,12 @@ Sub CreateDeviceDictionaries()
     
     ' Loop through the data and populate dictionaries
     For i = 2 To lastRow ' Start from row 2 to skip header
-        nearEndType = ws.Cells(i, "A").Value
-        nearEndDevice = ws.Cells(i, "B").Value
-        nearEndPort = ws.Cells(i, "C").Value
-        farEndType = ws.Cells(i, "D").Value
-        farEndDevice = ws.Cells(i, "E").Value
-        farEndPort = ws.Cells(i, "F").Value
+        nearEndType = CStr(ws.Cells(i, "A").Value)
+        nearEndDevice = CStr(ws.Cells(i, "B").Value)
+        nearEndPort = CStr(ws.Cells(i, "C").Value)
+        farEndType = CStr(ws.Cells(i, "D").Value)
+        farEndDevice = CStr(ws.Cells(i, "E").Value)
+        farEndPort = CStr(ws.Cells(i, "F").Value)
         
         ' Process Near End Device
         If Not nearEndDevices.Exists(nearEndDevice) Then
@@ -76,12 +76,12 @@ Sub GenerateCommandLists()
     
     ' Process near-end devices
     For Each device In nearEndDevices.Keys
-        ProcessDevice nearEndDevices(device), device, aristaCommands, ciscoCommands
+        ProcessDevice nearEndDevices(device), CStr(device), aristaCommands, ciscoCommands
     Next device
     
     ' Process far-end devices
     For Each device In farEndDevices.Keys
-        ProcessDevice farEndDevices(device), device, aristaCommands, ciscoCommands
+        ProcessDevice farEndDevices(device), CStr(device), aristaCommands, ciscoCommands
     Next device
     
     MsgBox "Command lists have been generated and added as new worksheets.", vbInformation
@@ -102,7 +102,7 @@ Function ReadCommandFile(filePath As String) As String
     End If
 End Function
 
-Sub ProcessDevice(deviceInfo As Dictionary, deviceName As String, aristaTemplate As String, ciscoTemplate As String)
+Sub ProcessDevice(ByVal deviceInfo As Dictionary, ByVal deviceName As String, ByVal aristaTemplate As String, ByVal ciscoTemplate As String)
     Dim deviceType As String
     Dim interfaceList As String
     Dim commandList As String
@@ -111,7 +111,7 @@ Sub ProcessDevice(deviceInfo As Dictionary, deviceName As String, aristaTemplate
     Dim commandLines() As String
     Dim i As Long
     
-    deviceType = LCase(deviceInfo("type"))
+    deviceType = LCase(CStr(deviceInfo("type")))
     
     ' Skip if device type is server
     If deviceType = "server" Then Exit Sub
@@ -120,7 +120,7 @@ Sub ProcessDevice(deviceInfo As Dictionary, deviceName As String, aristaTemplate
     interfaceList = ""
     For Each port In deviceInfo("ports")
         If interfaceList <> "" Then interfaceList = interfaceList & ","
-        interfaceList = interfaceList & port
+        interfaceList = interfaceList & CStr(port)
     Next port
     
     ' Generate command list based on device type
