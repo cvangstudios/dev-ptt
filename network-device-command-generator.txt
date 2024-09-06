@@ -1,0 +1,156 @@
+Option Explicit
+
+' Add reference to Microsoft Scripting Runtime for Dictionary and FileSystemObject
+' Tools -> References -> Microsoft Scripting Runtime
+
+Private nearEndDevices As Dictionary
+Private farEndDevices As Dictionary
+
+Sub CreateDeviceDictionaries()
+    Dim ws As Worksheet
+    Dim lastRow As Long, i As Long
+    Dim deviceInfo As Dictionary
+    Dim nearEndDevice As String, farEndDevice As String
+    Dim nearEndType As String, farEndType As String
+    Dim nearEndPort As String, farEndPort As String
+    
+    ' Set the source worksheet to "caw"
+    Set ws = ThisWorkbook.Worksheets("caw")
+    
+    ' Find the last row with data
+    lastRow = ws.Cells(ws.Rows.Count, "A").End(xlUp).Row
+    
+    ' Initialize dictionaries
+    Set nearEndDevices = New Dictionary
+    Set farEndDevices = New Dictionary
+    
+    ' Loop through the data and populate dictionaries
+    For i = 2 To lastRow ' Start from row 2 to skip header
+        nearEndType = ws.Cells(i, "A").Value
+        nearEndDevice = ws.Cells(i, "B").Value
+        nearEndPort = ws.Cells(i, "C").Value
+        farEndType = ws.Cells(i, "D").Value
+        farEndDevice = ws.Cells(i, "E").Value
+        farEndPort = ws.Cells(i, "F").Value
+        
+        ' Process Near End Device
+        If Not nearEndDevices.Exists(nearEndDevice) Then
+            Set deviceInfo = New Dictionary
+            deviceInfo.Add "type", nearEndType
+            deviceInfo.Add "ports", New Collection
+            nearEndDevices.Add nearEndDevice, deviceInfo
+        End If
+        nearEndDevices(nearEndDevice)("ports").Add nearEndPort
+        
+        ' Process Far End Device
+        If Not farEndDevices.Exists(farEndDevice) Then
+            Set deviceInfo = New Dictionary
+            deviceInfo.Add "type", farEndType
+            deviceInfo.Add "ports", New Collection
+            farEndDevices.Add farEndDevice, deviceInfo
+        End If
+        farEndDevices(farEndDevice)("ports").Add farEndPort
+    Next i
+    
+    Debug.Print "Device dictionaries created successfully."
+End Sub
+
+Sub GenerateCommandLists()
+    Dim device As Variant
+    Dim deviceInfo As Dictionary
+    Dim aristaCommands As String
+    Dim ciscoCommands As String
+    
+    ' Call the function to create device dictionaries
+    Call CreateDeviceDictionaries
+    
+    ' Read command templates from files in the same directory as the workbook
+    aristaCommands = ReadCommandFile(ThisWorkbook.Path & "\aristaCommands.txt")
+    ciscoCommands = ReadCommandFile(ThisWorkbook.Path & "\ciscoCommands.txt")
+    
+    ' Check if both command files were read successfully
+    If aristaCommands = "" Or ciscoCommands = "" Then
+        MsgBox "Failed to read one or both command files. Please ensure they exist in the same directory as this workbook.", vbExclamation
+        Exit Sub
+    End If
+    
+    ' Process near-end devices
+    For Each device In nearEndDevices.Keys
+        ProcessDevice nearEndDevices(device), device, aristaCommands, ciscoCommands
+    Next device
+    
+    ' Process far-end devices
+    For Each device In farEndDevices.Keys
+        ProcessDevice farEndDevices(device), device, aristaCommands, ciscoCommands
+    Next device
+    
+    MsgBox "Command lists have been generated and added as new worksheets.", vbInformation
+End Sub
+
+Function ReadCommandFile(filePath As String) As String
+    Dim fso As New FileSystemObject
+    Dim txtFile As TextStream
+    
+    If fso.FileExists(filePath) Then
+        Set txtFile = fso.OpenTextFile(filePath, ForReading)
+        ReadCommandFile = txtFile.ReadAll
+        txtFile.Close
+    Else
+        MsgBox "Command file not found: " & filePath & vbNewLine & _
+               "Please ensure it exists in the same directory as this workbook.", vbExclamation
+        ReadCommandFile = ""
+    End If
+End Function
+
+Sub ProcessDevice(deviceInfo As Dictionary, deviceName As String, aristaTemplate As String, ciscoTemplate As String)
+    Dim deviceType As String
+    Dim interfaceList As String
+    Dim commandList As String
+    Dim port As Variant
+    Dim ws As Worksheet
+    Dim commandLines() As String
+    Dim i As Long
+    
+    deviceType = LCase(deviceInfo("type"))
+    
+    ' Skip if device type is server
+    If deviceType = "server" Then Exit Sub
+    
+    ' Create interface list
+    interfaceList = ""
+    For Each port In deviceInfo("ports")
+        If interfaceList <> "" Then interfaceList = interfaceList & ","
+        interfaceList = interfaceList & port
+    Next port
+    
+    ' Generate command list based on device type
+    Select Case deviceType
+        Case "arista"
+            commandList = Replace(aristaTemplate, "[interfaces]", interfaceList)
+        Case "cisco"
+            commandList = Replace(ciscoTemplate, "[interfaces]", interfaceList)
+        Case Else
+            Exit Sub ' Skip unknown device types
+    End Select
+    
+    ' Create new worksheet for the device
+    On Error Resume Next
+    Set ws = ThisWorkbook.Worksheets(deviceName)
+    On Error GoTo 0
+    
+    If ws Is Nothing Then
+        Set ws = ThisWorkbook.Worksheets.Add(After:=ThisWorkbook.Worksheets(ThisWorkbook.Worksheets.Count))
+        ws.Name = deviceName
+    Else
+        ws.Cells.Clear ' Clear existing content if sheet already exists
+    End If
+    
+    ' Write commands to the worksheet
+    commandLines = Split(commandList, vbNewLine)
+    For i = LBound(commandLines) To UBound(commandLines)
+        ws.Cells(i + 1, 1).Value = commandLines(i)
+    Next i
+    
+    ' Auto-fit column width
+    ws.Columns("A").AutoFit
+End Sub
