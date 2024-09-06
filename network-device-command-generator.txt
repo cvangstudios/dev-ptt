@@ -57,6 +57,30 @@ Sub CreateDeviceDictionaries()
     Debug.Print "Device dictionaries created successfully."
 End Sub
 
+Function GetUserHomeDirectory() As String
+    Dim homeDir As String
+    
+    ' Try USERPROFILE first (works on most Windows versions including 11)
+    homeDir = Environ$("USERPROFILE")
+    
+    ' If USERPROFILE is empty, try HOMEDRIVE + HOMEPATH
+    If homeDir = "" Then
+        homeDir = Environ$("HOMEDRIVE") & Environ$("HOMEPATH")
+    End If
+    
+    ' If still empty, try a default path
+    If homeDir = "" Then
+        homeDir = "C:\Users\" & Environ$("USERNAME")
+    End If
+    
+    ' Ensure the path ends with a backslash
+    If Right(homeDir, 1) <> "\" Then
+        homeDir = homeDir & "\"
+    End If
+    
+    GetUserHomeDirectory = homeDir
+End Function
+
 Sub GenerateCommandLists()
     Dim device As Variant
     Dim deviceInfo As Dictionary
@@ -65,18 +89,22 @@ Sub GenerateCommandLists()
     Dim avocentCommands As String
     Dim ws As Worksheet
     Dim currentColumn As Long
+    Dim scriptFilesPath As String
     
     ' Call the function to create device dictionaries
     Call CreateDeviceDictionaries
     
-    ' Read command templates from files in the same directory as the workbook
-    aristaCommands = ReadCommandFile(ThisWorkbook.Path & "\aristaCommands.txt")
-    ciscoCommands = ReadCommandFile(ThisWorkbook.Path & "\ciscoCommands.txt")
-    avocentCommands = ReadCommandFile(ThisWorkbook.Path & "\avocentCommands.txt")
+    ' Get the path to the scriptFiles folder in the user's home directory
+    scriptFilesPath = GetUserHomeDirectory() & "scriptFiles\"
+    
+    ' Read command templates from files in the scriptFiles folder
+    aristaCommands = ReadCommandFile(scriptFilesPath & "aristaCommands.txt")
+    ciscoCommands = ReadCommandFile(scriptFilesPath & "ciscoCommands.txt")
+    avocentCommands = ReadCommandFile(scriptFilesPath & "avocentCommands.txt")
     
     ' Check if all command files were read successfully
     If aristaCommands = "" Or ciscoCommands = "" Or avocentCommands = "" Then
-        MsgBox "Failed to read one or more command files. Please ensure they exist in the same directory as this workbook.", vbExclamation
+        MsgBox "Failed to read one or more command files. Please ensure they exist in " & scriptFilesPath, vbExclamation
         Exit Sub
     End If
     
@@ -113,14 +141,25 @@ End Sub
 Function ReadCommandFile(filePath As String) As String
     Dim fso As New FileSystemObject
     Dim txtFile As TextStream
+    Dim line As String
+    Dim commandContent As String
     
     If fso.FileExists(filePath) Then
         Set txtFile = fso.OpenTextFile(filePath, ForReading)
-        ReadCommandFile = txtFile.ReadAll
+        
+        Do While Not txtFile.AtEndOfStream
+            line = Trim(txtFile.ReadLine)
+            ' Ignore lines starting with #
+            If Left(line, 1) <> "#" Then
+                commandContent = commandContent & line & vbNewLine
+            End If
+        Loop
+        
         txtFile.Close
+        ReadCommandFile = Trim(commandContent)
     Else
         MsgBox "Command file not found: " & filePath & vbNewLine & _
-               "Please ensure it exists in the same directory as this workbook.", vbExclamation
+               "Please ensure it exists in the scriptFiles folder in your home directory.", vbExclamation
         ReadCommandFile = ""
     End If
 End Function
