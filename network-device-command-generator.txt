@@ -316,3 +316,38 @@ Sub CreateCleanupWorkbookButton()
     
     MsgBox "Cleanup button added to the 'caw' sheet. Click it to delete the 'Project Commands' sheet and clear the 'caw' sheet.", vbInformation
 End Sub
+
+
+
+
+
+Public Sub LaunchSecureCRTSessions()
+    Dim cell As Range
+    Dim hostname As String
+    Dim username As String
+    Dim secureCRTPath As String
+    Dim shellCommand As String
+    
+    ' Set the path to your SecureCRT executable
+    secureCRTPath = """C:\Program Files\VanDyke Software\SecureCRT\SecureCRT.exe"""
+    
+    ' Set the default username for SSH connections
+    username = "your_default_username"
+    
+    ' Loop through each selected cell
+    For Each cell In Selection
+        ' Get the hostname from the cell
+        hostname = cell.Value
+        
+        ' Skip empty cells
+        If Len(hostname) > 0 Then
+            ' Construct the SecureCRT command
+            shellCommand = secureCRTPath & " /SSH2 /L " & username & " /T /SYNCHRONOUS " & hostname
+            
+            ' Execute the command
+            CreateObject("WScript.Shell").Run shellCommand, 1, False
+        End If
+    Next cell
+    
+    MsgBox "SecureCRT sessions launched for selected cells.", vbInformation
+End Sub
