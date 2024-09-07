@@ -8,7 +8,6 @@ Public Function DNSLookup(hostname As String, Optional defaultDomain As String =
     Dim strOutput As String
     Dim arrLines As Variant
     Dim i As Long
-    Dim nonAuthAnswerFound As Boolean
     
     ' Check if hostname already includes a domain
     If InStr(hostname, ".") = 0 And defaultDomain <> "" Then
@@ -29,15 +28,14 @@ Public Function DNSLookup(hostname As String, Optional defaultDomain As String =
     ' Split the output into lines
     arrLines = Split(strOutput, vbNewLine)
     
-    ' Look for the non-authoritative answer and the subsequent address
-    nonAuthAnswerFound = False
-    For i = 0 To UBound(arrLines)
-        If InStr(arrLines(i), "Non-authoritative answer:") > 0 Then
-            nonAuthAnswerFound = True
-        ElseIf nonAuthAnswerFound And InStr(arrLines(i), "Address:") > 0 Then
-            ' Extract the IP address
-            DNSLookup = Trim(Split(arrLines(i), ":")(1))
-            GoTo Cleanup
+    ' Look for the line with "Address:" that comes after the line with "Name:"
+    For i = 0 To UBound(arrLines) - 1
+        If InStr(arrLines(i), "Name:") > 0 Then
+            If InStr(arrLines(i + 1), "Address:") > 0 Then
+                ' Extract the IP address
+                DNSLookup = Trim(Split(arrLines(i + 1), ":")(1))
+                GoTo Cleanup
+            End If
         End If
     Next i
     
@@ -65,8 +63,8 @@ Public Function DebugDNSLookup(hostname As String, Optional defaultDomain As Str
     Dim strOutput As String
     Dim arrLines As Variant
     Dim i As Long
-    Dim nonAuthAnswerFound As Boolean
     Dim debugOutput As String
+    Dim result As String
     
     debugOutput = "Starting lookup for: " & hostname & vbNewLine
     
@@ -93,29 +91,29 @@ Public Function DebugDNSLookup(hostname As String, Optional defaultDomain As Str
     ' Split the output into lines
     arrLines = Split(strOutput, vbNewLine)
     
-    ' Look for the non-authoritative answer and the subsequent address
-    nonAuthAnswerFound = False
-    For i = 0 To UBound(arrLines)
-        If InStr(arrLines(i), "Non-authoritative answer:") > 0 Then
-            nonAuthAnswerFound = True
-            debugOutput = debugOutput & "Found non-authoritative answer" & vbNewLine
-        ElseIf nonAuthAnswerFound And InStr(arrLines(i), "Address:") > 0 Then
-            ' Extract the IP address
-            DebugDNSLookup = Trim(Split(arrLines(i), ":")(1))
-            debugOutput = debugOutput & "Found address: " & DebugDNSLookup & vbNewLine
-            GoTo Cleanup
+    ' Look for the line with "Address:" that comes after the line with "Name:"
+    For i = 0 To UBound(arrLines) - 1
+        If InStr(arrLines(i), "Name:") > 0 Then
+            debugOutput = debugOutput & "Found Name line: " & arrLines(i) & vbNewLine
+            If InStr(arrLines(i + 1), "Address:") > 0 Then
+                ' Extract the IP address
+                result = Trim(Split(arrLines(i + 1), ":")(1))
+                debugOutput = debugOutput & "Found Address line: " & arrLines(i + 1) & vbNewLine
+                debugOutput = debugOutput & "Extracted IP: " & result & vbNewLine
+                GoTo Cleanup
+            End If
         End If
     Next i
     
     ' If no address found, return "Not found"
-    DebugDNSLookup = "Not found"
+    result = "Not found"
     debugOutput = debugOutput & "Address not found" & vbNewLine
     
 Cleanup:
     ' Clean up
     Set objExec = Nothing
     Set objShell = Nothing
-    DebugDNSLookup = debugOutput & "Final result: " & DebugDNSLookup
+    DebugDNSLookup = debugOutput & "Final result: " & result
     Exit Function
     
 ErrorHandler:
