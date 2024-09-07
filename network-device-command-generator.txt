@@ -380,12 +380,17 @@ End Sub
 
 
 
-Public Sub LaunchSecureCRTSessionsSecure()
+Public Sub LaunchSecureCRTSessionsTabs()
     Dim cell As Range
     Dim hostname As String
     Dim username As String
     Dim secureCRTPath As String
     Dim shellCommand As String
+    Dim sessionsLaunched As Integer
+    Dim fso As Object
+    Dim tempFile As Object
+    Dim scriptContent As String
+    Dim tempFilePath As String
     
     On Error GoTo ErrorHandler
     
@@ -401,6 +406,32 @@ Public Sub LaunchSecureCRTSessionsSecure()
         Exit Sub
     End If
     
+    ' Create FileSystemObject
+    Set fso = CreateObject("Scripting.FileSystemObject")
+    
+    ' Create a temporary file for the VBScript
+    tempFilePath = fso.GetSpecialFolder(2) & "\SecureCRT_Temp_" & Format(Now, "yyyymmddhhnnss") & ".vbs"
+    Set tempFile = fso.CreateTextFile(tempFilePath, True)
+    
+    ' Write the VBScript content
+    scriptContent = _
+        "Sub Main" & vbNewLine & _
+        "    Dim tab" & vbNewLine & _
+        "    Set tab = crt.Session.ConnectInTab(""/SSH2 /L " & username & " ${HOSTNAME}"")" & vbNewLine & _
+        "End Sub"
+    
+    tempFile.Write scriptContent
+    tempFile.Close
+    
+    sessionsLaunched = 0
+    
+    ' First, launch SecureCRT if it's not already running
+    shellCommand = secureCRTPath & " /MIN"
+    CreateObject("WScript.Shell").Run shellCommand, 1, True
+    
+    ' Wait a bit to ensure SecureCRT is ready
+    Application.Wait (Now + TimeValue("0:00:02"))
+    
     ' Loop through each selected cell
     For Each cell In Selection
         ' Get the hostname from the cell
@@ -408,81 +439,30 @@ Public Sub LaunchSecureCRTSessionsSecure()
         
         ' Skip empty cells
         If Len(hostname) > 0 Then
-            ' Construct the SecureCRT command
-            shellCommand = secureCRTPath & " /SSH2 /L " & username & " " & hostname
+            ' Construct the SecureCRT command to run the script
+            shellCommand = secureCRTPath & " /SCRIPT " & """" & tempFilePath & """ /S " & """" & hostname & """"
             
             ' Execute the command
             CreateObject("WScript.Shell").Run shellCommand, 1, False
             
-            ' Optional: Add a small delay to prevent overwhelming the system
+            sessionsLaunched = sessionsLaunched + 1
+            
+            ' Add a small delay to prevent overwhelming the system
             Application.Wait (Now + TimeValue("0:00:01"))
         End If
     Next cell
     
-    MsgBox "SecureCRT sessions launched for selected cells.", vbInformation
+    ' Clean up the temporary file
+    fso.DeleteFile tempFilePath
+    
+    MsgBox sessionsLaunched & " SecureCRT session(s) launched in tabs.", vbInformation
     Exit Sub
     
 ErrorHandler:
     MsgBox "An error occurred: " & Err.Description, vbExclamation
-End Sub
-
-
-
-
-
-Public Sub LaunchSecureCRTSessionsDebug()
-    Dim cell As Range
-    Dim hostname As String
-    Dim username As String
-    Dim secureCRTPath As String
-    Dim shellCommand As String
-    Dim debugMsg As String
     
-    On Error GoTo ErrorHandler
-    
-    ' Set the path to your SecureCRT executable
-    secureCRTPath = """C:\Program Files\VanDyke Software\SecureCRT\SecureCRT.exe"""
-    
-    ' Prompt for username
-    username = InputBox("Enter the username for SSH connections:", "SSH Username")
-    
-    ' Check if user cancelled the input
-    If username = "" Then
-        MsgBox "Operation cancelled. No username provided.", vbInformation
-        Exit Sub
+    ' Clean up the temporary file if it exists
+    If fso.FileExists(tempFilePath) Then
+        fso.DeleteFile tempFilePath
     End If
-    
-    debugMsg = "Selected cells:" & vbNewLine
-    
-    ' Loop through each selected cell
-    For Each cell In Selection
-        ' Get the hostname from the cell
-        hostname = Trim(cell.Value)
-        debugMsg = debugMsg & "Cell " & cell.Address & ": '" & hostname & "'" & vbNewLine
-        
-        ' Skip empty cells
-        If Len(hostname) > 0 Then
-            ' Construct the SecureCRT command
-            shellCommand = secureCRTPath & " /SSH2 /L " & username & " " & hostname
-            debugMsg = debugMsg & "Command: " & shellCommand & vbNewLine
-            
-            ' Execute the command
-            CreateObject("WScript.Shell").Run shellCommand, 1, False
-            
-            ' Optional: Add a small delay to prevent overwhelming the system
-            Application.Wait (Now + TimeValue("0:00:01"))
-        Else
-            debugMsg = debugMsg & "Skipped (empty cell)" & vbNewLine
-        End If
-    Next cell
-    
-    ' Display debug information
-    MsgBox debugMsg, vbInformation, "Debug Information"
-    
-    MsgBox "SecureCRT sessions launched for selected cells.", vbInformation
-    Exit Sub
-    
-ErrorHandler:
-    MsgBox "An error occurred: " & Err.Description & vbNewLine & _
-           "Debug information:" & vbNewLine & debugMsg, vbExclamation
 End Sub
