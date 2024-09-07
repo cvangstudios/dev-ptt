@@ -425,3 +425,64 @@ Public Sub LaunchSecureCRTSessionsSecure()
 ErrorHandler:
     MsgBox "An error occurred: " & Err.Description, vbExclamation
 End Sub
+
+
+
+
+
+Public Sub LaunchSecureCRTSessionsDebug()
+    Dim cell As Range
+    Dim hostname As String
+    Dim username As String
+    Dim secureCRTPath As String
+    Dim shellCommand As String
+    Dim debugMsg As String
+    
+    On Error GoTo ErrorHandler
+    
+    ' Set the path to your SecureCRT executable
+    secureCRTPath = """C:\Program Files\VanDyke Software\SecureCRT\SecureCRT.exe"""
+    
+    ' Prompt for username
+    username = InputBox("Enter the username for SSH connections:", "SSH Username")
+    
+    ' Check if user cancelled the input
+    If username = "" Then
+        MsgBox "Operation cancelled. No username provided.", vbInformation
+        Exit Sub
+    End If
+    
+    debugMsg = "Selected cells:" & vbNewLine
+    
+    ' Loop through each selected cell
+    For Each cell In Selection
+        ' Get the hostname from the cell
+        hostname = Trim(cell.Value)
+        debugMsg = debugMsg & "Cell " & cell.Address & ": '" & hostname & "'" & vbNewLine
+        
+        ' Skip empty cells
+        If Len(hostname) > 0 Then
+            ' Construct the SecureCRT command
+            shellCommand = secureCRTPath & " /SSH2 /L " & username & " " & hostname
+            debugMsg = debugMsg & "Command: " & shellCommand & vbNewLine
+            
+            ' Execute the command
+            CreateObject("WScript.Shell").Run shellCommand, 1, False
+            
+            ' Optional: Add a small delay to prevent overwhelming the system
+            Application.Wait (Now + TimeValue("0:00:01"))
+        Else
+            debugMsg = debugMsg & "Skipped (empty cell)" & vbNewLine
+        End If
+    Next cell
+    
+    ' Display debug information
+    MsgBox debugMsg, vbInformation, "Debug Information"
+    
+    MsgBox "SecureCRT sessions launched for selected cells.", vbInformation
+    Exit Sub
+    
+ErrorHandler:
+    MsgBox "An error occurred: " & Err.Description & vbNewLine & _
+           "Debug information:" & vbNewLine & debugMsg, vbExclamation
+End Sub
