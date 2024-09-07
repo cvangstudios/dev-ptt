@@ -345,15 +345,18 @@ Public Sub LaunchSecureCRTSessionsSecure()
     ' Loop through each selected cell
     For Each cell In Selection
         ' Get the hostname from the cell
-        hostname = cell.Value
+        hostname = Trim(cell.Value)
         
         ' Skip empty cells
         If Len(hostname) > 0 Then
             ' Construct the SecureCRT command
-            shellCommand = secureCRTPath & " /SSH2 /L " & username & " /SYNCHRONOUS /T " & hostname
+            shellCommand = secureCRTPath & " /SSH2 /L " & username & " " & hostname
             
             ' Execute the command
             CreateObject("WScript.Shell").Run shellCommand, 1, False
+            
+            ' Optional: Add a small delay to prevent overwhelming the system
+            Application.Wait (Now + TimeValue("0:00:01"))
         End If
     Next cell
     
