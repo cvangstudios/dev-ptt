@@ -321,18 +321,26 @@ End Sub
 
 
 
-Public Sub LaunchSecureCRTSessions()
+Public Sub LaunchSecureCRTSessionsSecure()
     Dim cell As Range
     Dim hostname As String
     Dim username As String
     Dim secureCRTPath As String
     Dim shellCommand As String
     
+    On Error GoTo ErrorHandler
+    
     ' Set the path to your SecureCRT executable
     secureCRTPath = """C:\Program Files\VanDyke Software\SecureCRT\SecureCRT.exe"""
     
-    ' Set the default username for SSH connections
-    username = "your_default_username"
+    ' Prompt for username
+    username = InputBox("Enter the username for SSH connections:", "SSH Username")
+    
+    ' Check if user cancelled the input
+    If username = "" Then
+        MsgBox "Operation cancelled. No username provided.", vbInformation
+        Exit Sub
+    End If
     
     ' Loop through each selected cell
     For Each cell In Selection
@@ -342,7 +350,7 @@ Public Sub LaunchSecureCRTSessions()
         ' Skip empty cells
         If Len(hostname) > 0 Then
             ' Construct the SecureCRT command
-            shellCommand = secureCRTPath & " /SSH2 /L " & username & " /T /SYNCHRONOUS " & hostname
+            shellCommand = secureCRTPath & " /SSH2 /L " & username & " /SYNCHRONOUS /T " & hostname
             
             ' Execute the command
             CreateObject("WScript.Shell").Run shellCommand, 1, False
@@ -350,4 +358,8 @@ Public Sub LaunchSecureCRTSessions()
     Next cell
     
     MsgBox "SecureCRT sessions launched for selected cells.", vbInformation
+    Exit Sub
+    
+ErrorHandler:
+    MsgBox "An error occurred: " & Err.Description, vbExclamation
 End Sub
