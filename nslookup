@@ -1,0 +1,124 @@
+' Regular DNS Lookup function
+Public Function DNSLookup(hostname As String, Optional defaultDomain As String = "") As String
+    On Error GoTo ErrorHandler
+    
+    Dim fullHostname As String
+    Dim objShell As Object
+    Dim objExec As Object
+    Dim strOutput As String
+    Dim arrLines As Variant
+    Dim i As Long
+    Dim nonAuthAnswerFound As Boolean
+    
+    ' Check if hostname already includes a domain
+    If InStr(hostname, ".") = 0 And defaultDomain <> "" Then
+        fullHostname = hostname & "." & defaultDomain
+    Else
+        fullHostname = hostname
+    End If
+    
+    ' Create Shell object
+    Set objShell = CreateObject("WScript.Shell")
+    
+    ' Run nslookup command
+    Set objExec = objShell.Exec("nslookup " & fullHostname)
+    
+    ' Get the output
+    strOutput = objExec.StdOut.ReadAll
+    
+    ' Split the output into lines
+    arrLines = Split(strOutput, vbNewLine)
+    
+    ' Look for the non-authoritative answer and the subsequent address
+    nonAuthAnswerFound = False
+    For i = 0 To UBound(arrLines)
+        If InStr(arrLines(i), "Non-authoritative answer:") > 0 Then
+            nonAuthAnswerFound = True
+        ElseIf nonAuthAnswerFound And InStr(arrLines(i), "Address:") > 0 Then
+            ' Extract the IP address
+            DNSLookup = Trim(Split(arrLines(i), ":")(1))
+            GoTo Cleanup
+        End If
+    Next i
+    
+    ' If no address found, return "Not found"
+    DNSLookup = "Not found"
+    
+Cleanup:
+    ' Clean up
+    Set objExec = Nothing
+    Set objShell = Nothing
+    Exit Function
+    
+ErrorHandler:
+    DNSLookup = "Error: " & Err.Description
+    Resume Cleanup
+End Function
+
+' Debug DNS Lookup function
+Public Function DebugDNSLookup(hostname As String, Optional defaultDomain As String = "") As String
+    On Error GoTo ErrorHandler
+    
+    Dim fullHostname As String
+    Dim objShell As Object
+    Dim objExec As Object
+    Dim strOutput As String
+    Dim arrLines As Variant
+    Dim i As Long
+    Dim nonAuthAnswerFound As Boolean
+    Dim debugOutput As String
+    
+    debugOutput = "Starting lookup for: " & hostname & vbNewLine
+    
+    ' Check if hostname already includes a domain
+    If InStr(hostname, ".") = 0 And defaultDomain <> "" Then
+        fullHostname = hostname & "." & defaultDomain
+    Else
+        fullHostname = hostname
+    End If
+    
+    debugOutput = debugOutput & "Full hostname: " & fullHostname & vbNewLine
+    
+    ' Create Shell object
+    Set objShell = CreateObject("WScript.Shell")
+    
+    ' Run nslookup command
+    Set objExec = objShell.Exec("nslookup " & fullHostname)
+    
+    ' Get the output
+    strOutput = objExec.StdOut.ReadAll
+    
+    debugOutput = debugOutput & "nslookup output:" & vbNewLine & strOutput & vbNewLine
+    
+    ' Split the output into lines
+    arrLines = Split(strOutput, vbNewLine)
+    
+    ' Look for the non-authoritative answer and the subsequent address
+    nonAuthAnswerFound = False
+    For i = 0 To UBound(arrLines)
+        If InStr(arrLines(i), "Non-authoritative answer:") > 0 Then
+            nonAuthAnswerFound = True
+            debugOutput = debugOutput & "Found non-authoritative answer" & vbNewLine
+        ElseIf nonAuthAnswerFound And InStr(arrLines(i), "Address:") > 0 Then
+            ' Extract the IP address
+            DebugDNSLookup = Trim(Split(arrLines(i), ":")(1))
+            debugOutput = debugOutput & "Found address: " & DebugDNSLookup & vbNewLine
+            GoTo Cleanup
+        End If
+    Next i
+    
+    ' If no address found, return "Not found"
+    DebugDNSLookup = "Not found"
+    debugOutput = debugOutput & "Address not found" & vbNewLine
+    
+Cleanup:
+    ' Clean up
+    Set objExec = Nothing
+    Set objShell = Nothing
+    DebugDNSLookup = debugOutput & "Final result: " & DebugDNSLookup
+    Exit Function
+    
+ErrorHandler:
+    DebugDNSLookup = "Error: " & Err.Description
+    Resume Cleanup
+End Function
