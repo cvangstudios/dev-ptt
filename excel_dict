@@ -1,0 +1,284 @@
+Option Explicit
+
+' Global variables
+Dim dictHeaders As Object
+Dim arrNewHeaders As Variant
+Dim dictMappedHeaders As Object
+
+' UserForm variables
+Dim ufHeaderMapping As Object
+
+Sub ProcessData()
+    ' This is the main subroutine that will be triggered by the button
+    
+    ' Initialize variables
+    Set dictHeaders = CreateObject("Scripting.Dictionary")
+    Set dictMappedHeaders = CreateObject("Scripting.Dictionary")
+    arrNewHeaders = Array("device name", "console server", "console port", "monitor switch", "monitor port", "oob mgmt port", "upstream device", "upstream port")
+    
+    ' Get the selected range
+    Dim rng As Range
+    On Error Resume Next
+    Set rng = Selection
+    On Error GoTo 0
+    
+    If rng Is Nothing Then
+        MsgBox "Please select a range first, then click the button again.", vbExclamation
+        Exit Sub
+    End If
+    
+    ' Process the data
+    Call ReadHeaders(rng)
+    Call PromptForHeaderMapping
+    Call ProcessColumns(rng)
+    
+    MsgBox "Data processing complete!", vbInformation
+End Sub
+
+Sub ReadHeaders(rng As Range)
+    ' Read the headers from the first row of the selection
+    Dim cell As Range
+    For Each cell In rng.Rows(1).Cells
+        If Not IsEmpty(cell.Value) Then
+            dictHeaders.Add cell.Value, cell.Column
+        End If
+    Next cell
+End Sub
+
+Sub PromptForHeaderMapping()
+    ' Create and show the UserForm for header mapping
+    Set ufHeaderMapping = ThisWorkbook.VBProject.VBComponents.Add(vbext_ct_MSForm)
+    
+    With ufHeaderMapping
+        .Properties("Caption") = "Map Headers"
+        .Properties("Width") = 400
+        .Properties("Height") = 300 + (dictHeaders.Count * 30)
+        
+        ' Add controls to the form
+        Dim lblInstructions As Object
+        Set lblInstructions = .Designer.Controls.Add("Forms.Label.1")
+        With lblInstructions
+            .Caption = "Map original headers to new headers:"
+            .Left = 10
+            .Top = 10
+            .Width = 380
+        End With
+        
+        ' Add controls for each header
+        Dim i As Integer
+        i = 0
+        Dim header As Variant
+        For Each header In dictHeaders.Keys
+            ' Add label for original header
+            Dim lblOrigHeader As Object
+            Set lblOrigHeader = .Designer.Controls.Add("Forms.Label.1")
+            With lblOrigHeader
+                .Caption = header
+                .Left = 10
+                .Top = 40 + (i * 30)
+                .Width = 150
+            End With
+            
+            ' Add dropdown for new header
+            Dim cboNewHeader As Object
+            Set cboNewHeader = .Designer.Controls.Add("Forms.ComboBox.1")
+            With cboNewHeader
+                .Left = 170
+                .Top = 40 + (i * 30)
+                .Width = 200
+                .Name = "cboNewHeader" & i
+                
+                ' Populate dropdown with new header options
+                Dim j As Integer
+                For j = 0 To UBound(arrNewHeaders)
+                    .AddItem arrNewHeaders(j)
+                Next j
+            End With
+            
+            i = i + 1
+        Next header
+        
+        ' Add OK and Cancel buttons
+        Dim btnOK As Object
+        Set btnOK = .Designer.Controls.Add("Forms.CommandButton.1")
+        With btnOK
+            .Caption = "OK"
+            .Left = 170
+            .Top = .Parent.InsideHeight - 40
+            .Width = 80
+            .Name = "btnOK"
+        End With
+        
+        Dim btnCancel As Object
+        Set btnCancel = .Designer.Controls.Add("Forms.CommandButton.1")
+        With btnCancel
+            .Caption = "Cancel"
+            .Left = 260
+            .Top = .Parent.InsideHeight - 40
+            .Width = 80
+            .Name = "btnCancel"
+        End With
+    End With
+    
+    ' Add event handlers
+    Dim vbComp As VBIDE.VBComponent
+    Set vbComp = ufHeaderMapping
+    
+    Dim codeModule As VBIDE.CodeModule
+    Set codeModule = vbComp.CodeModule
+    
+    ' Add OK button click event handler
+    codeModule.InsertLines codeModule.CountOfLines + 1, vbNewLine & "Private Sub btnOK_Click()" & vbNewLine & _
+        "    Call ProcessHeaderMapping" & vbNewLine & _
+        "    Me.Hide" & vbNewLine & _
+        "End Sub" & vbNewLine
+    
+    ' Add Cancel button click event handler
+    codeModule.InsertLines codeModule.CountOfLines + 1, vbNewLine & "Private Sub btnCancel_Click()" & vbNewLine & _
+        "    Me.Hide" & vbNewLine & _
+        "End Sub" & vbNewLine
+    
+    ' Add ProcessHeaderMapping subroutine
+    codeModule.InsertLines codeModule.CountOfLines + 1, vbNewLine & "Private Sub ProcessHeaderMapping()" & vbNewLine & _
+        "    Dim i As Integer" & vbNewLine & _
+        "    Dim originalHeader As Variant" & vbNewLine & _
+        "    i = 0" & vbNewLine & _
+        "    For Each originalHeader In " & ufHeaderMapping.Name & ".Parent.dictHeaders.Keys" & vbNewLine & _
+        "        Dim newHeader As String" & vbNewLine & _
+        "        newHeader = Me.Controls(""cboNewHeader"" & i).Value" & vbNewLine & _
+        "        If newHeader <> """" Then" & vbNewLine & _
+        "            " & ufHeaderMapping.Name & ".Parent.dictMappedHeaders.Add originalHeader, newHeader" & vbNewLine & _
+        "        End If" & vbNewLine & _
+        "        i = i + 1" & vbNewLine & _
+        "    Next originalHeader" & vbNewLine & _
+        "End Sub" & vbNewLine
+    
+    ' Show the form
+    ufHeaderMapping.Designer.Show
+End Sub
+
+Sub ProcessColumns(rng As Range)
+    Dim deviceNameCol As Integer
+    Dim deviceNames As Object
+    Dim mainDict As Object
+    Dim row As Range
+    Dim deviceName As String
+    Dim i As Integer
+    Dim attr As Variant
+    
+    ' Find the column number for "device name"
+    For Each attr In dictMappedHeaders
+        If dictMappedHeaders(attr) = "device name" Then
+            deviceNameCol = dictHeaders(attr)
+            Exit For
+        End If
+    Next attr
+    
+    If deviceNameCol = 0 Then
+        MsgBox "Device Name column not found. Please ensure it's mapped correctly.", vbExclamation
+        Exit Sub
+    End If
+    
+    ' Create a dictionary to store unique device names
+    Set deviceNames = CreateObject("Scripting.Dictionary")
+    
+    ' Scan for duplicate device names
+    For i = 2 To rng.Rows.Count ' Assuming first row is header
+        deviceName = rng.Cells(i, deviceNameCol).Value
+        If Not deviceNames.Exists(deviceName) Then
+            deviceNames.Add deviceName, i
+        Else
+            ' Handle duplicate device name
+            Select Case HandleDuplicateDeviceName(deviceName, i, deviceNames(deviceName))
+                Case 1 ' Keep first occurrence
+                    ' Do nothing, keep existing entry
+                Case 2 ' Append unique identifier
+                    deviceName = AppendUniqueIdentifier(deviceName, i)
+                    deviceNames.Add deviceName, i
+                Case 3 ' Cancel operation
+                    MsgBox "Operation cancelled. Please correct duplicate device names and try again.", vbExclamation
+                    Exit Sub
+            End Select
+        End If
+    Next i
+    
+    ' Create main dictionary
+    Set mainDict = CreateObject("Scripting.Dictionary")
+    
+    ' Populate main dictionary
+    For Each deviceName In deviceNames.Keys
+        Dim subDict As Object
+        Set subDict = CreateObject("Scripting.Dictionary")
+        
+        ' Get the row for this device
+        Set row = rng.Rows(deviceNames(deviceName))
+        
+        ' Populate sub-dictionary with attributes
+        For Each attr In dictMappedHeaders.Keys
+            subDict.Add dictMappedHeaders(attr), row.Cells(1, dictHeaders(attr)).Value
+        Next attr
+        
+        ' Add to main dictionary
+        mainDict.Add deviceName, subDict
+    Next deviceName
+    
+    ' Print dictionary contents
+    Call PrintDictionaryContents(mainDict)
+End Sub
+
+Function HandleDuplicateDeviceName(deviceName As String, newRow As Integer, existingRow As Integer) As Integer
+    Dim response As Integer
+    response = MsgBox("Duplicate device name '" & deviceName & "' found in rows " & existingRow & " and " & newRow & "." & vbNewLine & _
+                      "How would you like to proceed?" & vbNewLine & vbNewLine & _
+                      "Yes - Keep first occurrence (row " & existingRow & ")" & vbNewLine & _
+                      "No - Append unique identifier to second occurrence (row " & newRow & ")" & vbNewLine & _
+                      "Cancel - Stop processing and allow manual correction", _
+                      vbYesNoCancel + vbQuestion, "Duplicate Device Name")
+    HandleDuplicateDeviceName = response
+End Function
+
+Function AppendUniqueIdentifier(deviceName As String, rowNum As Integer) As String
+    AppendUniqueIdentifier = deviceName & "_" & rowNum
+End Function
+
+Sub PrintDictionaryContents(dict As Object)
+    Dim ws As Worksheet
+    Dim deviceName As Variant
+    Dim attr As Variant
+    Dim rowNum As Long
+    
+    ' Add a new worksheet to display results
+    Set ws = ThisWorkbook.Worksheets.Add
+    ws.Name = "Dictionary Contents " & Format(Now, "yyyymmdd_hhmmss")
+    
+    ' Set up headers
+    ws.Cells(1, 1).Value = "Device Name"
+    rowNum = 2
+    
+    ' Print dictionary contents
+    For Each deviceName In dict.Keys
+        ws.Cells(rowNum, 1).Value = deviceName
+        
+        Dim colNum As Integer
+        colNum = 2
+        
+        For Each attr In dict(deviceName).Keys
+            ' If this is the first device, add the attribute name as a header
+            If rowNum = 2 Then
+                ws.Cells(1, colNum).Value = attr
+            End If
+            
+            ws.Cells(rowNum, colNum).Value = dict(deviceName)(attr)
+            colNum = colNum + 1
+        Next attr
+        
+        rowNum = rowNum + 1
+    Next deviceName
+    
+    ' Auto-fit columns for better readability
+    ws.UsedRange.Columns.AutoFit
+    
+    ' Inform user
+    MsgBox "Dictionary contents have been printed to the new worksheet '" & ws.Name & "'", vbInformation
+End Sub
+
