@@ -28,22 +28,94 @@ Sub ProcessData()
     End If
     
     ' Process the data
-    Call ReadHeaders(rng)
+    If Not ReadHeaders(rng) Then
+        Exit Sub  ' Exit if there was an issue with headers
+    End If
     Call PromptForHeaderMapping
     Call ProcessColumns(rng)
     
     MsgBox "Data processing complete!", vbInformation
 End Sub
 
-Sub ReadHeaders(rng As Range)
+Function ReadHeaders(rng As Range) As Boolean
     ' Read the headers from the first row of the selection
     Dim cell As Range
+    Dim duplicateHeaders As Object
+    Set duplicateHeaders = CreateObject("Scripting.Dictionary")
+    
     For Each cell In rng.Rows(1).Cells
         If Not IsEmpty(cell.Value) Then
-            dictHeaders.Add cell.Value, cell.Column
+            If dictHeaders.Exists(cell.Value) Then
+                ' Found a duplicate header
+                If Not duplicateHeaders.Exists(cell.Value) Then
+                    duplicateHeaders.Add cell.Value, New Collection
+                End If
+                duplicateHeaders(cell.Value).Add cell.Column
+            Else
+                dictHeaders.Add cell.Value, cell.Column
+            End If
         End If
     Next cell
-End Sub
+    
+    ' Handle duplicate headers
+    If duplicateHeaders.Count > 0 Then
+        Dim header As Variant
+        For Each header In duplicateHeaders.Keys
+            Dim chosenColumn As Long
+            chosenColumn = PromptForHeaderChoice(header, duplicateHeaders(header))
+            If chosenColumn = 0 Then
+                ' User cancelled
+                ReadHeaders = False
+                Exit Function
+            End If
+            
+            ' Remove any existing entry for this header
+            If dictHeaders.Exists(header) Then
+                dictHeaders.Remove header
+            End If
+            
+            ' Add the chosen column
+            dictHeaders.Add header, chosenColumn
+            
+            ' If this was a "Device name" header, map the other one to "upstream device"
+            If LCase(header) = "device name" Then
+                Dim otherColumn As Variant
+                For Each otherColumn In duplicateHeaders(header)
+                    If otherColumn <> chosenColumn Then
+                        dictHeaders.Add header & " (upstream)", otherColumn
+                        Exit For
+                    End If
+                Next otherColumn
+            End If
+        Next header
+    End If
+    
+    ReadHeaders = True
+End Function
+
+Function PromptForHeaderChoice(header As String, columns As Collection) As Long
+    Dim msg As String
+    Dim i As Integer
+    Dim response As Integer
+    
+    msg = "Duplicate header '" & header & "' found in columns: " & vbNewLine
+    For i = 1 To columns.Count
+        msg = msg & "  " & i & ". Column " & columns(i) & vbNewLine
+    Next i
+    msg = msg & "Which column would you like to use for '" & header & "'?"
+    
+    response = Application.InputBox(msg, "Choose Column", Type:=1)
+    
+    If response = 0 Then
+        ' User cancelled
+        PromptForHeaderChoice = 0
+    ElseIf response > 0 And response <= columns.Count Then
+        PromptForHeaderChoice = columns(response)
+    Else
+        MsgBox "Invalid selection. Please try again.", vbExclamation
+        PromptForHeaderChoice = PromptForHeaderChoice(header, columns)  ' Recursive call for retry
+    End If
+End Function
 
 Sub PromptForHeaderMapping()
     ' Create and show the UserForm for header mapping
@@ -93,6 +165,13 @@ Sub PromptForHeaderMapping()
                 For j = 0 To UBound(arrNewHeaders)
                     .AddItem arrNewHeaders(j)
                 Next j
+                
+                ' Set default value if it's a match or for "upstream device"
+                If LCase(header) = "device name (upstream)" Then
+                    .Value = "upstream device"
+                ElseIf IsInArray(LCase(header), arrNewHeaders) Then
+                    .Value = LCase(header)
+                End If
             End With
             
             i = i + 1
@@ -281,4 +360,8 @@ Sub PrintDictionaryContents(dict As Object)
     ' Inform user
     MsgBox "Dictionary contents have been printed to the new worksheet '" & ws.Name & "'", vbInformation
 End Sub
+
+Function IsInArray(stringToBeFound As String, arr As Variant) As Boolean
+    IsInArray = (UBound(Filter(arr, stringToBeFound)) > -1)
+End Function
 
