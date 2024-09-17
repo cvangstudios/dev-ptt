@@ -2,6 +2,9 @@
 
 Option Explicit
 
+' Add this line at the top of the module
+Private frmHeaderMapping As ufHeaderMapping
+
 Public dictHeaders As Object
 Public arrNewHeaders As Variant
 Public dictMappedHeaders As Object
@@ -33,7 +36,8 @@ Sub ProcessData()
     DisplayHeaders "Headers read:", dictHeaders
     
     ' Show the header mapping form
-    ufHeaderMapping.Show
+    Set frmHeaderMapping = New ufHeaderMapping
+    frmHeaderMapping.Show
     
     ' Check if header mapping was successful
     If dictMappedHeaders.Count = 0 Then
