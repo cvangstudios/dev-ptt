@@ -1,12 +1,12 @@
 Option Explicit
 
 ' Global variables
-Dim dictHeaders As Object
-Dim arrNewHeaders As Variant
-Dim dictMappedHeaders As Object
+Private dictHeaders As Object
+Private arrNewHeaders As Variant
+Private dictMappedHeaders As Object
 
 ' UserForm variables
-Dim ufHeaderMapping As Object
+Private ufHeaderMapping As Object
 
 Sub ProcessData()
     ' This is the main subroutine that will be triggered by the button
@@ -29,15 +29,41 @@ Sub ProcessData()
     
     ' Process the data
     If Not ReadHeaders(rng) Then
-        Exit Sub  ' Exit if there was an issue with headers
+        MsgBox "There was an issue reading the headers. Please check your data and try again.", vbExclamation
+        Exit Sub
     End If
+    
+    ' Display the headers that were read
+    Dim key As Variant
+    Dim headerInfo As String
+    headerInfo = "Headers read:" & vbNewLine
+    For Each key In dictHeaders.Keys
+        headerInfo = headerInfo & key & ": Column " & dictHeaders(key) & vbNewLine
+    Next key
+    MsgBox headerInfo, vbInformation, "Headers Read"
+    
     Call PromptForHeaderMapping
+    
+    ' Check if header mapping was successful
+    If dictMappedHeaders.Count = 0 Then
+        MsgBox "Header mapping was not completed. Process will exit.", vbExclamation
+        Exit Sub
+    End If
+    
+    ' Display the mapped headers
+    Dim mappedHeaderInfo As String
+    mappedHeaderInfo = "Mapped Headers:" & vbNewLine
+    For Each key In dictMappedHeaders.Keys
+        mappedHeaderInfo = mappedHeaderInfo & key & " -> " & dictMappedHeaders(key) & vbNewLine
+    Next key
+    MsgBox mappedHeaderInfo, vbInformation, "Mapped Headers"
+    
     Call ProcessColumns(rng)
     
     MsgBox "Data processing complete!", vbInformation
 End Sub
 
-Function ReadHeaders(rng As Range) As Boolean
+Private Function ReadHeaders(rng As Range) As Boolean
     ' Read the headers from the first row of the selection
     Dim cell As Range
     Dim duplicateHeaders As Object
@@ -88,7 +114,7 @@ Function ReadHeaders(rng As Range) As Boolean
                 If LCase(header) = "device name" Then
                     Dim otherColumn As Variant
                     For Each otherColumn In columns
-                        If otherColumn <> chosenColumn Then
+                        If CLng(otherColumn) <> chosenColumn Then
                             dictHeaders.Add header & " (upstream)", CLng(otherColumn)
                             Exit For
                         End If
@@ -96,11 +122,18 @@ Function ReadHeaders(rng As Range) As Boolean
                 End If
                 
                 ' Remove duplicate entries
+                Dim keysToRemove As New Collection
                 For Each key In dictHeaders.Keys
                     If Left(key, 4 + Len(header)) = "dup_" & header & "_" Then
-                        dictHeaders.Remove key
+                        keysToRemove.Add key
                     End If
                 Next key
+                
+                ' Remove the keys
+                Dim keyToRemove As Variant
+                For Each keyToRemove In keysToRemove
+                    dictHeaders.Remove CStr(keyToRemove)
+                Next keyToRemove
             End If
         Next header
     End If
@@ -108,7 +141,7 @@ Function ReadHeaders(rng As Range) As Boolean
     ReadHeaders = True
 End Function
 
-Function PromptForHeaderChoice(header As String, columns As Collection) As Long
+Private Function PromptForHeaderChoice(header As String, columns As Collection) As Long
     Dim msg As String
     Dim i As Integer
     Dim response As Integer
@@ -132,7 +165,7 @@ Function PromptForHeaderChoice(header As String, columns As Collection) As Long
     End If
 End Function
 
-Sub PromptForHeaderMapping()
+Private Sub PromptForHeaderMapping()
     ' Create and show the UserForm for header mapping
     Set ufHeaderMapping = ThisWorkbook.VBProject.VBComponents.Add(vbext_ct_MSForm)
     
@@ -251,13 +284,13 @@ Sub PromptForHeaderMapping()
     ufHeaderMapping.Designer.Show
 End Sub
 
-Sub ProcessColumns(rng As Range)
-    Dim deviceNameCol As Integer
+Private Sub ProcessColumns(rng As Range)
+    Dim deviceNameCol As Long
     Dim deviceNames As Object
     Dim mainDict As Object
     Dim row As Range
     Dim deviceName As String
-    Dim i As Integer
+    Dim i As Long
     Dim attr As Variant
     
     ' Find the column number for "device name"
@@ -320,8 +353,8 @@ Sub ProcessColumns(rng As Range)
     Call PrintDictionaryContents(mainDict)
 End Sub
 
-Function HandleDuplicateDeviceName(deviceName As String, newRow As Integer, existingRow As Integer) As Integer
-    Dim response As Integer
+Private Function HandleDuplicateDeviceName(deviceName As String, newRow As Long, existingRow As Long) As Integer
+    Dim response As VbMsgBoxResult
     response = MsgBox("Duplicate device name '" & deviceName & "' found in rows " & existingRow & " and " & newRow & "." & vbNewLine & _
                       "How would you like to proceed?" & vbNewLine & vbNewLine & _
                       "Yes - Keep first occurrence (row " & existingRow & ")" & vbNewLine & _
@@ -331,11 +364,11 @@ Function HandleDuplicateDeviceName(deviceName As String, newRow As Integer, exis
     HandleDuplicateDeviceName = response
 End Function
 
-Function AppendUniqueIdentifier(deviceName As String, rowNum As Integer) As String
+Private Function AppendUniqueIdentifier(deviceName As String, rowNum As Long) As String
     AppendUniqueIdentifier = deviceName & "_" & rowNum
 End Function
 
-Sub PrintDictionaryContents(dict As Object)
+Private Sub PrintDictionaryContents(dict As Object)
     Dim ws As Worksheet
     Dim deviceName As Variant
     Dim attr As Variant
@@ -357,26 +390,4 @@ Sub PrintDictionaryContents(dict As Object)
         colNum = 2
         
         For Each attr In dict(deviceName).Keys
-            ' If this is the first device, add the attribute name as a header
-            If rowNum = 2 Then
-                ws.Cells(1, colNum).Value = attr
-            End If
-            
-            ws.Cells(rowNum, colNum).Value = dict(deviceName)(attr)
-            colNum = colNum + 1
-        Next attr
-        
-        rowNum = rowNum + 1
-    Next deviceName
-    
-    ' Auto-fit columns for better readability
-    ws.UsedRange.Columns.AutoFit
-    
-    ' Inform user
-    MsgBox "Dictionary contents have been printed to the new worksheet '" & ws.Name & "'", vbInformation
-End Sub
-
-Function IsInArray(stringToBeFound As String, arr As Variant) As Boolean
-    IsInArray = (UBound(Filter(arr, stringToBeFound)) > -1)
-End Function
-
+            ' If this is the first device,
