@@ -1,117 +1,88 @@
 Option Explicit
 
-' Predefined new headers
-Public arrNewHeaders As Variant
-
-Sub ProcessData()
-    arrNewHeaders = Array("device name", "console server", "console port", "monitor switch", "monitor port", "oob mgmt port", "upstream device", "upstream port")
-    
+Sub CreateDictionaryFromSelection()
     ' Get the selected range
     Dim rng As Range
-    On Error Resume Next
     Set rng = Selection
-    On Error GoTo 0
     
+    ' Check if a range is selected
     If rng Is Nothing Then
-        MsgBox "Please select a range first, then click the button again.", vbExclamation
+        MsgBox "Please select a range first, then run the macro again.", vbExclamation
         Exit Sub
     End If
     
-    ' Read headers
+    ' Get headers
     Dim headers As Variant
-    headers = GetHeaders(rng)
+    headers = Application.Transpose(Application.Transpose(rng.Rows(1).Value))
     
-    ' Map headers
-    Dim mappedHeaders As Object
-    Set mappedHeaders = MapHeaders(headers)
+    ' Ask user to choose the key column
+    Dim keyColumnName As String
+    keyColumnName = InputBox("Enter the column header to use as the dictionary key:" & vbNewLine & _
+                             "Options: " & Join(headers, ", "), "Select Key Column")
     
-    ' Process data
-    Dim deviceDict As Object
-    Set deviceDict = ProcessDevices(rng, mappedHeaders)
+    ' Find the key column index
+    Dim keyColumnIndex As Integer
+    keyColumnIndex = Application.Match(keyColumnName, headers, 0)
     
-    ' Display results
-    DisplayResults deviceDict
+    If IsError(keyColumnIndex) Then
+        MsgBox "Invalid column name. Please try again.", vbExclamation
+        Exit Sub
+    End If
+    
+    ' Create the dictionary
+    Dim dict As Object
+    Set dict = CreateObject("Scripting.Dictionary")
+    
+    ' Populate the dictionary
+    Dim i As Long
+    Dim key As Variant
+    Dim rowDict As Object
+    
+    For i = 2 To rng.Rows.Count ' Start from second row (assuming first row is header)
+        key = rng.Cells(i, keyColumnIndex).Value
+        
+        If Not dict.Exists(key) Then
+            Set rowDict = CreateObject("Scripting.Dictionary")
+            Dim j As Integer
+            For j = 1 To UBound(headers)
+                rowDict.Add headers(j), rng.Cells(i, j).Value
+            Next j
+            dict.Add key, rowDict
+        End If
+    Next i
+    
+    ' Output to new sheet
+    OutputDictionaryToSheet dict, headers
+    
+    MsgBox "Dictionary created and output to a new sheet.", vbInformation
 End Sub
 
-Function GetHeaders(rng As Range) As Variant
-    GetHeaders = Application.Transpose(Application.Transpose(rng.Rows(1).Value))
-End Function
-
-Function MapHeaders(headers As Variant) As Object
-    Dim mappedHeaders As Object
-    Set mappedHeaders = CreateObject("Scripting.Dictionary")
-    
-    Dim i As Integer
-    For i = LBound(headers) To UBound(headers)
-        Dim newHeader As String
-        newHeader = InputBox("Map '" & headers(i) & "' to which new header?" & vbNewLine & _
-                             "Options: " & Join(arrNewHeaders, ", "), _
-                             "Map Header", "")
-        
-        If newHeader <> "" Then
-            mappedHeaders.Add headers(i), newHeader
-        End If
-    Next i
-    
-    Set MapHeaders = mappedHeaders
-End Function
-
-Function ProcessDevices(rng As Range, mappedHeaders As Object) As Object
-    Dim deviceDict As Object
-    Set deviceDict = CreateObject("Scripting.Dictionary")
-    
-    Dim i As Long
-    Dim deviceName As String
-    Dim attr As Variant
-    
-    For i = 2 To rng.Rows.Count ' Assuming first row is header
-        deviceName = rng.Cells(i, mappedHeaders("device name")).Value
-        
-        If Not deviceDict.Exists(deviceName) Then
-            Dim deviceInfo As Object
-            Set deviceInfo = CreateObject("Scripting.Dictionary")
-            
-            For Each attr In mappedHeaders.Keys
-                deviceInfo.Add mappedHeaders(attr), rng.Cells(i, rng.Rows(1).Find(attr, LookAt:=xlWhole).Column).Value
-            Next attr
-            
-            deviceDict.Add deviceName, deviceInfo
-        End If
-    Next i
-    
-    Set ProcessDevices = deviceDict
-End Function
-
-Sub DisplayResults(deviceDict As Object)
+Sub OutputDictionaryToSheet(dict As Object, headers As Variant)
+    ' Add a new worksheet
     Dim ws As Worksheet
     Set ws = ThisWorkbook.Worksheets.Add
     
     ' Write headers
-    ws.Cells(1, 1).Value = "Device Name"
+    ws.Cells(1, 1).Value = "Key"
     Dim i As Integer
-    i = 2
-    Dim attr As Variant
-    For Each attr In arrNewHeaders
-        ws.Cells(1, i).Value = attr
-        i = i + 1
-    Next attr
+    For i = 1 To UBound(headers)
+        ws.Cells(1, i + 1).Value = headers(i)
+    Next i
     
     ' Write data
     Dim row As Long
     row = 2
-    Dim deviceName As Variant
-    For Each deviceName In deviceDict.Keys
-        ws.Cells(row, 1).Value = deviceName
-        i = 2
-        For Each attr In arrNewHeaders
-            If deviceDict(deviceName).Exists(attr) Then
-                ws.Cells(row, i).Value = deviceDict(deviceName)(attr)
-            End If
-            i = i + 1
-        Next attr
-        row = row + 1
-    Next deviceName
+    Dim key As Variant
+    Dim col As Integer
     
+    For Each key In dict.Keys
+        ws.Cells(row, 1).Value = key
+        For i = 1 To UBound(headers)
+            ws.Cells(row, i + 1).Value = dict(key)(headers(i))
+        Next i
+        row = row + 1
+    Next key
+    
+    ' Auto-fit columns for better readability
     ws.UsedRange.Columns.AutoFit
-    MsgBox "Results have been written to a new worksheet.", vbInformation
 End Sub
