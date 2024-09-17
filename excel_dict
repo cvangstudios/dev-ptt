@@ -1,12 +1,11 @@
+' Main Module: DataProcessingModule
+
 Option Explicit
 
 ' Global variables
 Private dictHeaders As Object
 Private arrNewHeaders As Variant
 Private dictMappedHeaders As Object
-
-' UserForm variables
-Private ufHeaderMapping As Object
 
 Sub ProcessData()
     ' This is the main subroutine that will be triggered by the button
@@ -166,17 +165,21 @@ Private Function PromptForHeaderChoice(header As String, columns As Collection) 
 End Function
 
 Private Sub PromptForHeaderMapping()
-    ' Create and show the UserForm for header mapping
-    Set ufHeaderMapping = ThisWorkbook.VBProject.VBComponents.Add(vbext_ct_MSForm)
+    ' Clear existing controls
+    Dim ctrl As Control
+    For Each ctrl In ufHeaderMapping.Controls
+        ufHeaderMapping.Controls.Remove ctrl.Name
+    Next ctrl
     
+    ' Set form properties
     With ufHeaderMapping
-        .Properties("Caption") = "Map Headers"
-        .Properties("Width") = 400
-        .Properties("Height") = 300 + (dictHeaders.Count * 30)
+        .Caption = "Map Headers"
+        .Width = 400
+        .Height = 300 + (dictHeaders.Count * 30)
         
-        ' Add controls to the form
-        Dim lblInstructions As Object
-        Set lblInstructions = .Designer.Controls.Add("Forms.Label.1")
+        ' Add instructions label
+        Dim lblInstructions As MSForms.Label
+        Set lblInstructions = .Controls.Add("Forms.Label.1", "lblInstructions")
         With lblInstructions
             .Caption = "Map original headers to new headers:"
             .Left = 10
@@ -190,8 +193,8 @@ Private Sub PromptForHeaderMapping()
         Dim header As Variant
         For Each header In dictHeaders.Keys
             ' Add label for original header
-            Dim lblOrigHeader As Object
-            Set lblOrigHeader = .Designer.Controls.Add("Forms.Label.1")
+            Dim lblOrigHeader As MSForms.Label
+            Set lblOrigHeader = .Controls.Add("Forms.Label.1", "lblOrigHeader" & i)
             With lblOrigHeader
                 .Caption = header
                 .Left = 10
@@ -200,13 +203,12 @@ Private Sub PromptForHeaderMapping()
             End With
             
             ' Add dropdown for new header
-            Dim cboNewHeader As Object
-            Set cboNewHeader = .Designer.Controls.Add("Forms.ComboBox.1")
+            Dim cboNewHeader As MSForms.ComboBox
+            Set cboNewHeader = .Controls.Add("Forms.ComboBox.1", "cboNewHeader" & i)
             With cboNewHeader
                 .Left = 170
                 .Top = 40 + (i * 30)
                 .Width = 200
-                .Name = "cboNewHeader" & i
                 
                 ' Populate dropdown with new header options
                 Dim j As Integer
@@ -226,62 +228,27 @@ Private Sub PromptForHeaderMapping()
         Next header
         
         ' Add OK and Cancel buttons
-        Dim btnOK As Object
-        Set btnOK = .Designer.Controls.Add("Forms.CommandButton.1")
+        Dim btnOK As MSForms.CommandButton
+        Set btnOK = .Controls.Add("Forms.CommandButton.1", "btnOK")
         With btnOK
             .Caption = "OK"
             .Left = 170
             .Top = .Parent.InsideHeight - 40
             .Width = 80
-            .Name = "btnOK"
         End With
         
-        Dim btnCancel As Object
-        Set btnCancel = .Designer.Controls.Add("Forms.CommandButton.1")
+        Dim btnCancel As MSForms.CommandButton
+        Set btnCancel = .Controls.Add("Forms.CommandButton.1", "btnCancel")
         With btnCancel
             .Caption = "Cancel"
             .Left = 260
             .Top = .Parent.InsideHeight - 40
             .Width = 80
-            .Name = "btnCancel"
         End With
     End With
     
-    ' Add event handlers
-    Dim vbComp As VBIDE.VBComponent
-    Set vbComp = ufHeaderMapping
-    
-    Dim codeModule As VBIDE.CodeModule
-    Set codeModule = vbComp.CodeModule
-    
-    ' Add OK button click event handler
-    codeModule.InsertLines codeModule.CountOfLines + 1, vbNewLine & "Private Sub btnOK_Click()" & vbNewLine & _
-        "    Call ProcessHeaderMapping" & vbNewLine & _
-        "    Me.Hide" & vbNewLine & _
-        "End Sub" & vbNewLine
-    
-    ' Add Cancel button click event handler
-    codeModule.InsertLines codeModule.CountOfLines + 1, vbNewLine & "Private Sub btnCancel_Click()" & vbNewLine & _
-        "    Me.Hide" & vbNewLine & _
-        "End Sub" & vbNewLine
-    
-    ' Add ProcessHeaderMapping subroutine
-    codeModule.InsertLines codeModule.CountOfLines + 1, vbNewLine & "Private Sub ProcessHeaderMapping()" & vbNewLine & _
-        "    Dim i As Integer" & vbNewLine & _
-        "    Dim originalHeader As Variant" & vbNewLine & _
-        "    i = 0" & vbNewLine & _
-        "    For Each originalHeader In " & ufHeaderMapping.Name & ".Parent.dictHeaders.Keys" & vbNewLine & _
-        "        Dim newHeader As String" & vbNewLine & _
-        "        newHeader = Me.Controls(""cboNewHeader"" & i).Value" & vbNewLine & _
-        "        If newHeader <> """" Then" & vbNewLine & _
-        "            " & ufHeaderMapping.Name & ".Parent.dictMappedHeaders.Add originalHeader, newHeader" & vbNewLine & _
-        "        End If" & vbNewLine & _
-        "        i = i + 1" & vbNewLine & _
-        "    Next originalHeader" & vbNewLine & _
-        "End Sub" & vbNewLine
-    
     ' Show the form
-    ufHeaderMapping.Designer.Show
+    ufHeaderMapping.Show
 End Sub
 
 Private Sub ProcessColumns(rng As Range)
@@ -390,4 +357,50 @@ Private Sub PrintDictionaryContents(dict As Object)
         colNum = 2
         
         For Each attr In dict(deviceName).Keys
-            ' If this is the first device,
+            ' If this is the first device, add the attribute name as a header
+            If rowNum = 2 Then
+                ws.Cells(1, colNum).Value = attr
+            End If
+            
+            ws.Cells(rowNum, colNum).Value = dict(deviceName)(attr)
+            colNum = colNum + 1
+        Next attr
+        
+        rowNum = rowNum + 1
+    Next deviceName
+    
+    ' Auto-fit columns for better readability
+    ws.UsedRange.Columns.AutoFit
+    
+    ' Inform user
+    MsgBox "Dictionary contents have been printed to the new worksheet '" & ws.Name & "'", vbInformation
+End Sub
+
+Private Function IsInArray(stringToBeFound As String, arr As Variant) As Boolean
+    IsInArray = (UBound(Filter(arr, stringToBeFound)) > -1)
+End Function
+
+' UserForm Code: ufHeaderMapping
+
+Private Sub btnOK_Click()
+    Call ProcessHeaderMapping
+    Me.Hide
+End Sub
+
+Private Sub btnCancel_Click()
+    Me.Hide
+End Sub
+
+Private Sub ProcessHeaderMapping()
+    Dim i As Integer
+    Dim originalHeader As Variant
+    i = 0
+    For Each originalHeader In DataProcessingModule.dictHeaders.Keys
+        Dim newHeader As String
+        newHeader = Me.Controls("cboNewHeader" & i).Value
+        If newHeader <> "" Then
+            DataProcessingModule.dictMappedHeaders.Add originalHeader, newHeader
+        End If
+        i = i + 1
+    Next originalHeader
+End Sub
