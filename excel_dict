@@ -1,6 +1,6 @@
 Option Explicit
 
-Sub CreateDictionaryFromSelection()
+Sub CreateDeviceDictionary()
     ' Get the selected range
     Dim rng As Range
     Set rng = Selection
@@ -11,71 +11,80 @@ Sub CreateDictionaryFromSelection()
         Exit Sub
     End If
     
-    ' Create the dictionary
-    Dim dict As Object
-    Set dict = CreateObject("Scripting.Dictionary")
-    
     ' Get headers
     Dim headers As Variant
     headers = Application.Transpose(Application.Transpose(rng.Rows(1).Value))
     
+    ' Create the dictionary
+    Dim deviceDict As Object
+    Set deviceDict = CreateObject("Scripting.Dictionary")
+    
     ' Populate the dictionary
     Dim i As Long
-    Dim key As Variant
-    Dim rowDict As Object
-    Dim deviceCollection As Collection
+    Dim deviceName As Variant
+    Dim j As Integer
     
     For i = 2 To rng.Rows.Count ' Start from second row (assuming first row is header)
-        key = rng.Cells(i, 1).Value ' First column as key
+        deviceName = rng.Cells(i, 1).Value
         
-        If Not dict.Exists(key) Then
-            Set deviceCollection = New Collection
-            dict.Add key, deviceCollection
+        If Not deviceDict.Exists(deviceName) Then
+            deviceDict.Add deviceName, CreateObject("Scripting.Dictionary")
         End If
         
-        Set rowDict = CreateObject("Scripting.Dictionary")
-        Dim j As Integer
-        For j = 2 To UBound(headers) ' Start from second column
-            rowDict.Add headers(j), rng.Cells(i, j).Value
+        ' Add each column as a separate entry in the device's dictionary
+        For j = 2 To UBound(headers)
+            If Not deviceDict(deviceName).Exists(headers(j)) Then
+                deviceDict(deviceName).Add headers(j), CreateObject("Scripting.Dictionary")
+            End If
+            deviceDict(deviceName)(headers(j)).Add deviceDict(deviceName)(headers(j)).Count + 1, rng.Cells(i, j).Value
         Next j
-        dict(key).Add rowDict
     Next i
     
     ' Output to new sheet
-    OutputDictionaryToSheet dict, headers
+    OutputDeviceDictionaryToSheet deviceDict, headers
     
-    MsgBox "Dictionary created and output to a new sheet.", vbInformation
+    MsgBox "Device dictionary created and output to a new sheet.", vbInformation
 End Sub
 
-Sub OutputDictionaryToSheet(dict As Object, headers As Variant)
+Sub OutputDeviceDictionaryToSheet(deviceDict As Object, headers As Variant)
     ' Add a new worksheet
     Dim ws As Worksheet
     Set ws = ThisWorkbook.Worksheets.Add
     
     ' Write headers
-    ws.Cells(1, 1).Value = headers(1) ' First column header
     Dim i As Integer
-    For i = 2 To UBound(headers)
+    For i = 1 To UBound(headers)
         ws.Cells(1, i).Value = headers(i)
     Next i
     
     ' Write data
     Dim row As Long
     row = 2
-    Dim key As Variant
-    Dim deviceEntry As Object
-    Dim deviceCollection As Collection
+    Dim deviceName As Variant
+    Dim attr As Variant
+    Dim entryKey As Variant
+    Dim maxEntries As Long
     
-    For Each key In dict.Keys
-        Set deviceCollection = dict(key)
-        For Each deviceEntry In deviceCollection
-            ws.Cells(row, 1).Value = key
+    For Each deviceName In deviceDict.Keys
+        maxEntries = 0
+        ' Find the maximum number of entries for this device
+        For i = 2 To UBound(headers)
+            If deviceDict(deviceName)(headers(i)).Count > maxEntries Then
+                maxEntries = deviceDict(deviceName)(headers(i)).Count
+            End If
+        Next i
+        
+        ' Write entries
+        For entryKey = 1 To maxEntries
+            ws.Cells(row, 1).Value = deviceName
             For i = 2 To UBound(headers)
-                ws.Cells(row, i).Value = deviceEntry(headers(i))
+                If deviceDict(deviceName)(headers(i)).Exists(entryKey) Then
+                    ws.Cells(row, i).Value = deviceDict(deviceName)(headers(i))(entryKey)
+                End If
             Next i
             row = row + 1
-        Next deviceEntry
-    Next key
+        Next entryKey
+    Next deviceName
     
     ' Auto-fit columns for better readability
     ws.UsedRange.Columns.AutoFit
