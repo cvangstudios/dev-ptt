@@ -11,27 +11,13 @@ Sub CreateDictionaryFromSelection()
         Exit Sub
     End If
     
-    ' Get headers
-    Dim headers As Variant
-    headers = Application.Transpose(Application.Transpose(rng.Rows(1).Value))
-    
-    ' Ask user to choose the key column
-    Dim keyColumnName As String
-    keyColumnName = InputBox("Enter the column header to use as the dictionary key:" & vbNewLine & _
-                             "Options: " & Join(headers, ", "), "Select Key Column")
-    
-    ' Find the key column index
-    Dim keyColumnIndex As Integer
-    keyColumnIndex = Application.Match(keyColumnName, headers, 0)
-    
-    If IsError(keyColumnIndex) Then
-        MsgBox "Invalid column name. Please try again.", vbExclamation
-        Exit Sub
-    End If
-    
     ' Create the dictionary
     Dim dict As Object
     Set dict = CreateObject("Scripting.Dictionary")
+    
+    ' Get headers
+    Dim headers As Variant
+    headers = Application.Transpose(Application.Transpose(rng.Rows(1).Value))
     
     ' Populate the dictionary
     Dim i As Long
@@ -39,12 +25,12 @@ Sub CreateDictionaryFromSelection()
     Dim rowDict As Object
     
     For i = 2 To rng.Rows.Count ' Start from second row (assuming first row is header)
-        key = rng.Cells(i, keyColumnIndex).Value
+        key = rng.Cells(i, 1).Value ' First column as key
         
         If Not dict.Exists(key) Then
             Set rowDict = CreateObject("Scripting.Dictionary")
             Dim j As Integer
-            For j = 1 To UBound(headers)
+            For j = 2 To UBound(headers) ' Start from second column
                 rowDict.Add headers(j), rng.Cells(i, j).Value
             Next j
             dict.Add key, rowDict
@@ -63,22 +49,21 @@ Sub OutputDictionaryToSheet(dict As Object, headers As Variant)
     Set ws = ThisWorkbook.Worksheets.Add
     
     ' Write headers
-    ws.Cells(1, 1).Value = "Key"
+    ws.Cells(1, 1).Value = headers(1) ' First column header
     Dim i As Integer
-    For i = 1 To UBound(headers)
-        ws.Cells(1, i + 1).Value = headers(i)
+    For i = 2 To UBound(headers)
+        ws.Cells(1, i).Value = headers(i)
     Next i
     
     ' Write data
     Dim row As Long
     row = 2
     Dim key As Variant
-    Dim col As Integer
     
     For Each key In dict.Keys
         ws.Cells(row, 1).Value = key
-        For i = 1 To UBound(headers)
-            ws.Cells(row, i + 1).Value = dict(key)(headers(i))
+        For i = 2 To UBound(headers)
+            ws.Cells(row, i).Value = dict(key)(headers(i))
         Next i
         row = row + 1
     Next key
