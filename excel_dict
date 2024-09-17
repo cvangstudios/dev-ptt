@@ -48,9 +48,10 @@ Function ReadHeaders(rng As Range) As Boolean
             If dictHeaders.Exists(cell.Value) Then
                 ' Found a duplicate header
                 If Not duplicateHeaders.Exists(cell.Value) Then
-                    duplicateHeaders.Add cell.Value, New Collection
+                    duplicateHeaders.Add cell.Value, cell.Value
                 End If
-                duplicateHeaders(cell.Value).Add cell.Column
+                ' Store column numbers in dictHeaders with a prefix
+                dictHeaders.Add "dup_" & cell.Value & "_" & cell.Column, cell.Column
             Else
                 dictHeaders.Add cell.Value, cell.Column
             End If
@@ -61,31 +62,45 @@ Function ReadHeaders(rng As Range) As Boolean
     If duplicateHeaders.Count > 0 Then
         Dim header As Variant
         For Each header In duplicateHeaders.Keys
-            Dim chosenColumn As Long
-            chosenColumn = PromptForHeaderChoice(header, duplicateHeaders(header))
-            If chosenColumn = 0 Then
-                ' User cancelled
-                ReadHeaders = False
-                Exit Function
-            End If
+            Dim columns As New Collection
+            Dim key As Variant
+            For Each key In dictHeaders.Keys
+                If Left(key, 4 + Len(header)) = "dup_" & header & "_" Then
+                    columns.Add dictHeaders(key)
+                End If
+            Next key
             
-            ' Remove any existing entry for this header
-            If dictHeaders.Exists(header) Then
-                dictHeaders.Remove header
-            End If
-            
-            ' Add the chosen column
-            dictHeaders.Add header, chosenColumn
-            
-            ' If this was a "Device name" header, map the other one to "upstream device"
-            If LCase(header) = "device name" Then
-                Dim otherColumn As Variant
-                For Each otherColumn In duplicateHeaders(header)
-                    If otherColumn <> chosenColumn Then
-                        dictHeaders.Add header & " (upstream)", otherColumn
-                        Exit For
+            If columns.Count > 0 Then
+                columns.Add dictHeaders(header) ' Add the original column too
+                
+                Dim chosenColumn As Long
+                chosenColumn = PromptForHeaderChoice(CStr(header), columns)
+                If chosenColumn = 0 Then
+                    ' User cancelled
+                    ReadHeaders = False
+                    Exit Function
+                End If
+                
+                ' Update dictHeaders with the chosen column
+                dictHeaders(header) = chosenColumn
+                
+                ' If this was a "Device name" header, map the other one to "upstream device"
+                If LCase(header) = "device name" Then
+                    Dim otherColumn As Variant
+                    For Each otherColumn In columns
+                        If otherColumn <> chosenColumn Then
+                            dictHeaders.Add header & " (upstream)", CLng(otherColumn)
+                            Exit For
+                        End If
+                    Next otherColumn
+                End If
+                
+                ' Remove duplicate entries
+                For Each key In dictHeaders.Keys
+                    If Left(key, 4 + Len(header)) = "dup_" & header & "_" Then
+                        dictHeaders.Remove key
                     End If
-                Next otherColumn
+                Next key
             End If
         Next header
     End If
@@ -110,7 +125,7 @@ Function PromptForHeaderChoice(header As String, columns As Collection) As Long
         ' User cancelled
         PromptForHeaderChoice = 0
     ElseIf response > 0 And response <= columns.Count Then
-        PromptForHeaderChoice = columns(response)
+        PromptForHeaderChoice = CLng(columns(response))
     Else
         MsgBox "Invalid selection. Please try again.", vbExclamation
         PromptForHeaderChoice = PromptForHeaderChoice(header, columns)  ' Recursive call for retry
