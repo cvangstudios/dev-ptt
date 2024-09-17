@@ -1,0 +1,54 @@
+Option Explicit
+
+Sub CreateURLFromSelection()
+    Dim selectedRange As Range
+    Dim cell As Range
+    Dim concatenatedValues As String
+    Dim urlTemplate As String
+    Dim finalURL As String
+    
+    ' Get the selected range
+    On Error Resume Next
+    Set selectedRange = Selection
+    On Error GoTo 0
+    
+    ' Check if a range is selected
+    If selectedRange Is Nothing Then
+        MsgBox "Please select a range first, then run the macro again.", vbExclamation
+        Exit Sub
+    End If
+    
+    ' Concatenate the values with URL-encoded commas
+    For Each cell In selectedRange
+        If Len(concatenatedValues) > 0 Then
+            concatenatedValues = concatenatedValues & "%2C"
+        End If
+        concatenatedValues = concatenatedValues & cell.Value
+    Next cell
+    
+    ' Get the URL template from the user
+    urlTemplate = InputBox("Enter your URL template with %s where you want to insert the values:", "URL Template")
+    
+    ' Check if the user cancelled the input
+    If urlTemplate = "" Then
+        MsgBox "Operation cancelled.", vbInformation
+        Exit Sub
+    End If
+    
+    ' Replace %s in the template with the concatenated values
+    finalURL = Replace(urlTemplate, "%s", concatenatedValues)
+    
+    ' Display the final URL
+    MsgBox "Your final URL is:" & vbNewLine & vbNewLine & finalURL, vbInformation
+    
+    ' Copy the URL to clipboard
+    CopyToClipboard finalURL
+    
+    MsgBox "The URL has been copied to your clipboard.", vbInformation
+End Sub
+
+Sub CopyToClipboard(text As String)
+    Dim objData As New DataObject
+    objData.SetText text
+    objData.PutInClipboard
+End Sub
