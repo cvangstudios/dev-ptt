@@ -1,5 +1,8 @@
 Option Explicit
 
+' Add reference to Microsoft Shell Controls And Automation
+' Tools -> References -> Microsoft Shell Controls And Automation
+
 Sub CreateURLFromSelection()
     Dim selectedRange As Range
     Dim cell As Range
@@ -26,29 +29,34 @@ Sub CreateURLFromSelection()
         concatenatedValues = concatenatedValues & cell.Value
     Next cell
     
-    ' Get the URL template from the user
-    urlTemplate = InputBox("Enter your URL template with %s where you want to insert the values:", "URL Template")
-    
-    ' Check if the user cancelled the input
-    If urlTemplate = "" Then
-        MsgBox "Operation cancelled.", vbInformation
-        Exit Sub
-    End If
-    
+    ' Set the URL template
+    urlTemplate = "https://yahoo.com/%s"
+      
     ' Replace %s in the template with the concatenated values
     finalURL = Replace(urlTemplate, "%s", concatenatedValues)
     
     ' Display the final URL
-    MsgBox "Your final URL is:" & vbNewLine & vbNewLine & finalURL, vbInformation
+    MsgBox "Opening new page to the following URL:" & vbNewLine & vbNewLine & finalURL, vbInformation
     
-    ' Copy the URL to clipboard
-    CopyToClipboard finalURL
-    
-    MsgBox "The URL has been copied to your clipboard.", vbInformation
+    ' Launch the URL in Microsoft Edge
+    LaunchURLInEdge finalURL
 End Sub
 
-Sub CopyToClipboard(text As String)
-    Dim objData As New DataObject
-    objData.SetText text
-    objData.PutInClipboard
+Sub LaunchURLInEdge(url As String)
+    Dim shell As Object
+    Dim edgePath As String
+    
+    Set shell = CreateObject("Shell.Application")
+    
+    ' Path to Microsoft Edge (this should work for most Windows installations)
+    edgePath = "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
+    
+    ' Check if Edge exists at the specified path
+    If Dir(edgePath) = "" Then
+        MsgBox "Microsoft Edge not found. Please ensure it's installed.", vbExclamation
+        Exit Sub
+    End If
+    
+    ' Launch Edge with the URL
+    shell.ShellExecute edgePath, """" & url & """", "", "", 1
 End Sub
