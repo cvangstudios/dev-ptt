@@ -23,18 +23,22 @@ Sub CreateDictionaryFromSelection()
     Dim i As Long
     Dim key As Variant
     Dim rowDict As Object
+    Dim deviceCollection As Collection
     
     For i = 2 To rng.Rows.Count ' Start from second row (assuming first row is header)
         key = rng.Cells(i, 1).Value ' First column as key
         
         If Not dict.Exists(key) Then
-            Set rowDict = CreateObject("Scripting.Dictionary")
-            Dim j As Integer
-            For j = 2 To UBound(headers) ' Start from second column
-                rowDict.Add headers(j), rng.Cells(i, j).Value
-            Next j
-            dict.Add key, rowDict
+            Set deviceCollection = New Collection
+            dict.Add key, deviceCollection
         End If
+        
+        Set rowDict = CreateObject("Scripting.Dictionary")
+        Dim j As Integer
+        For j = 2 To UBound(headers) ' Start from second column
+            rowDict.Add headers(j), rng.Cells(i, j).Value
+        Next j
+        dict(key).Add rowDict
     Next i
     
     ' Output to new sheet
@@ -59,13 +63,18 @@ Sub OutputDictionaryToSheet(dict As Object, headers As Variant)
     Dim row As Long
     row = 2
     Dim key As Variant
+    Dim deviceEntry As Object
+    Dim deviceCollection As Collection
     
     For Each key In dict.Keys
-        ws.Cells(row, 1).Value = key
-        For i = 2 To UBound(headers)
-            ws.Cells(row, i).Value = dict(key)(headers(i))
-        Next i
-        row = row + 1
+        Set deviceCollection = dict(key)
+        For Each deviceEntry In deviceCollection
+            ws.Cells(row, 1).Value = key
+            For i = 2 To UBound(headers)
+                ws.Cells(row, i).Value = deviceEntry(headers(i))
+            Next i
+            row = row + 1
+        Next deviceEntry
     Next key
     
     ' Auto-fit columns for better readability
