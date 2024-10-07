@@ -1,0 +1,33 @@
+Sub SaveWorksheetWithDynamicFilename()
+    Dim ws As Worksheet
+    Dim wb As Workbook
+    Dim defaultPath As String
+    Dim suggestedFileName As String
+    
+    ' Set the active worksheet and workbook
+    Set ws = ActiveSheet
+    Set wb = ThisWorkbook
+    
+    ' Get variables from cells (you can modify these cell references)
+    Dim var1 As String: var1 = ws.Range("A1").Value
+    Dim var2 As String: var2 = ws.Range("A2").Value
+    Dim var3 As String: var3 = ws.Range("A3").Value
+    Dim var4 As String: var4 = ws.Range("A4").Value
+    
+    ' Set default save path to the current workbook's directory
+    defaultPath = GetWorkbookPath(wb)
+    
+    ' Construct suggested filename using variables
+    suggestedFileName = var1 & "_" & var2 & "_" & var3 & "_" & var4 & "_" & Format(Now(), "yyyymmdd_hhnnss")
+    
+    ' Use Excel's built-in SaveAs dialog
+    Application.Dialogs(xlDialogSaveAs).Show defaultPath & suggestedFileName
+End Sub
+
+Function GetWorkbookPath(wb As Workbook) As String
+    If wb.Path = "" Then
+        GetWorkbookPath = Environ$("USERPROFILE") & "\Desktop\"
+    Else
+        GetWorkbookPath = wb.Path & "\"
+    End If
+End Function
