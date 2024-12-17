@@ -264,3 +264,15 @@ Public Sub ClearSearch()
         tbl.AutoFilter.ShowAllData
     End If
 End Sub
+
+
+
+
+
+Private Sub Worksheet_Change(ByVal Target As Range)
+    If Not Intersect(Target, Range("G1")) Is Nothing Then
+        If Target.Value = "" Then
+            Call ClearSearch
+        End If
+    End If
+End Sub
