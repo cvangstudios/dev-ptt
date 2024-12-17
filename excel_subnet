@@ -1,10 +1,109 @@
+' Place this code in a regular module:
 Option Explicit
 
-' [Previous IP2Long, Long2IP, and IsValidSubnet functions remain the same...]
-[Previous function definitions remain unchanged...]
+Private Function IP2Long(ByVal ipAddress As String) As Long
+    Dim ipParts As Variant
+    ipParts = Split(ipAddress, ".")
+    IP2Long = CLng(ipParts(0)) * 256 ^ 3 + CLng(ipParts(1)) * 256 ^ 2 + CLng(ipParts(2)) * 256 + CLng(ipParts(3))
+End Function
+
+Private Function Long2IP(ByVal longIP As Long) As String
+    Dim oct1 As Long, oct2 As Long, oct3 As Long, oct4 As Long
+    
+    oct1 = Int(longIP / 256 ^ 3)
+    longIP = longIP - (oct1 * 256 ^ 3)
+    oct2 = Int(longIP / 256 ^ 2)
+    longIP = longIP - (oct2 * 256 ^ 2)
+    oct3 = Int(longIP / 256)
+    oct4 = longIP - (oct3 * 256)
+    
+    Long2IP = oct1 & "." & oct2 & "." & oct3 & "." & oct4
+End Function
+
+Private Function IsValidSubnet(ByVal subnet As String) As Boolean
+    On Error GoTo InvalidSubnet
+    
+    Dim parts As Variant
+    parts = Split(subnet, "/")
+    
+    ' Check if we have exactly two parts (IP and CIDR)
+    If UBound(parts) <> 1 Then GoTo InvalidSubnet
+    
+    ' Check CIDR is between 0 and 32
+    If CInt(parts(1)) < 0 Or CInt(parts(1)) > 32 Then GoTo InvalidSubnet
+    
+    ' Check IP format
+    Dim ipParts As Variant
+    ipParts = Split(parts(0), ".")
+    If UBound(ipParts) <> 3 Then GoTo InvalidSubnet
+    
+    ' Check each octet is valid
+    Dim i As Integer
+    For i = 0 To 3
+        If CInt(ipParts(i)) < 0 Or CInt(ipParts(i)) > 255 Then GoTo InvalidSubnet
+    Next i
+    
+    IsValidSubnet = True
+    Exit Function
+    
+InvalidSubnet:
+    IsValidSubnet = False
+End Function
 
 Public Sub ExpandMultipleSubnets()
-    ' [Previous ExpandMultipleSubnets code remains the same until the table creation...]
+    Dim ws As Worksheet
+    Dim rng As Range
+    Dim tbl As ListObject
+    Dim outputWs As Worksheet
+    Dim subnet As Range
+    Dim lastRow As Long
+    Dim outputRow As Long
+    
+    ' Set the worksheet
+    Set ws = ActiveSheet
+    
+    ' Create new worksheet for output
+    On Error Resume Next
+    Application.DisplayAlerts = False
+    ThisWorkbook.Sheets("Subnets").Delete
+    Application.DisplayAlerts = True
+    Set outputWs = ThisWorkbook.Sheets.Add(After:=ws)
+    outputWs.Name = "Subnets"
+    On Error GoTo 0
+    
+    ' Set up headers in output worksheet
+    outputWs.Range("A1").Value = "IP Address"
+    outputWs.Range("B1").Value = "Type"
+    outputWs.Range("C1").Value = "Subnet"
+    outputWs.Range("D1").Value = "Hostname"
+    outputRow = 2
+    
+    ' Find last row with data in column A
+    lastRow = ws.Cells(ws.Rows.Count, "A").End(xlUp).Row
+    
+    ' Process each subnet
+    For Each subnet In ws.Range("A1:A" & lastRow)
+        If Not IsEmpty(subnet.Value) Then
+            If IsValidSubnet(subnet.Value) Then
+                Call ExpandSingleSubnet(subnet.Value, outputWs, outputRow)
+            Else
+                MsgBox "Invalid subnet format at row " & subnet.Row & ": " & subnet.Value, vbExclamation
+            End If
+        End If
+    Next subnet
+    
+    ' Convert range to table
+    Set rng = outputWs.Range("A1").CurrentRegion
+    
+    ' Create new table
+    Set tbl = outputWs.ListObjects.Add(xlSrcRange, rng, , xlYes)
+    tbl.Name = "SubnetTable"
+    
+    ' Format the table
+    With tbl
+        .TableStyle = "TableStyleMedium2"
+        .Range.Columns.AutoFit
+    End With
     
     ' Add search section
     With outputWs
@@ -33,7 +132,62 @@ Public Sub ExpandMultipleSubnets()
         End With
     End With
     
-    ' [Rest of the ExpandMultipleSubnets code remains the same...]
+    ' Activate the output worksheet
+    outputWs.Activate
+End Sub
+
+Private Sub ExpandSingleSubnet(ByVal subnetAddress As String, ByVal ws As Worksheet, ByRef currentRow As Long)
+    Dim cidr As Integer
+    Dim networkAddress As Long
+    Dim broadcastAddress As Long
+    Dim firstUsable As Long
+    Dim lastUsable As Long
+    Dim mask As Long
+    Dim i As Long
+    Dim hostCounter As Long
+    
+    ' Split the subnet and CIDR
+    Dim parts As Variant
+    parts = Split(subnetAddress, "/")
+    cidr = CInt(parts(1))
+    
+    ' Calculate subnet mask
+    mask = (2 ^ 32 - 1) - (2 ^ (32 - cidr) - 1)
+    
+    ' Calculate network and broadcast addresses
+    networkAddress = IP2Long(parts(0)) And mask
+    broadcastAddress = networkAddress Or (Not mask)
+    
+    ' Calculate first and last usable addresses
+    firstUsable = networkAddress + 1
+    lastUsable = broadcastAddress - 1
+    
+    ' Initialize host counter
+    hostCounter = 1
+    
+    ' Write network address
+    ws.Cells(currentRow, 1).Value = Long2IP(networkAddress)
+    ws.Cells(currentRow, 2).Value = "Network Address"
+    ws.Cells(currentRow, 3).Value = subnetAddress
+    ws.Cells(currentRow, 4).Value = "network-" & Replace(Long2IP(networkAddress), ".", "-")
+    currentRow = currentRow + 1
+    
+    ' Write all usable IP addresses
+    For i = firstUsable To lastUsable
+        ws.Cells(currentRow, 1).Value = Long2IP(i)
+        ws.Cells(currentRow, 2).Value = "Usable IP"
+        ws.Cells(currentRow, 3).Value = subnetAddress
+        ws.Cells(currentRow, 4).Value = "hostname-" & hostCounter
+        currentRow = currentRow + 1
+        hostCounter = hostCounter + 1
+    Next i
+    
+    ' Write broadcast address
+    ws.Cells(currentRow, 1).Value = Long2IP(broadcastAddress)
+    ws.Cells(currentRow, 2).Value = "Broadcast Address"
+    ws.Cells(currentRow, 3).Value = subnetAddress
+    ws.Cells(currentRow, 4).Value = "broadcast-" & Replace(Long2IP(broadcastAddress), ".", "-")
+    currentRow = currentRow + 1
 End Sub
 
 Public Sub SearchDevice()
@@ -43,7 +197,7 @@ Public Sub SearchDevice()
     Dim foundMatch As Boolean
     
     ' Set worksheet and get search text
-    Set ws = ThisWorkbook.Sheets("Expanded Subnets")
+    Set ws = ThisWorkbook.Sheets("Subnets")
     searchText = ws.Range("G1").Value
     
     If searchText = "" Then
@@ -99,7 +253,7 @@ Public Sub ClearSearch()
     Dim ws As Worksheet
     Dim tbl As ListObject
     
-    Set ws = ThisWorkbook.Sheets("Expanded Subnets")
+    Set ws = ThisWorkbook.Sheets("Subnets")
     Set tbl = ws.ListObjects("SubnetTable")
     
     ' Clear search box
@@ -108,14 +262,5 @@ Public Sub ClearSearch()
     ' Clear filters
     If tbl.ShowAutoFilter Then
         tbl.AutoFilter.ShowAllData
-    End If
-End Sub
-
-Private Sub Worksheet_Change(ByVal Target As Range)
-    ' Add this code to the Sheet module (right-click sheet name, View Code)
-    If Not Intersect(Target, Range("G1")) Is Nothing Then
-        If Target.Value = "" Then
-            Call ClearSearch
-        End If
     End If
 End Sub
