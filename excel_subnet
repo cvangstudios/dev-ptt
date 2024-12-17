@@ -1,0 +1,121 @@
+Option Explicit
+
+' [Previous IP2Long, Long2IP, and IsValidSubnet functions remain the same...]
+[Previous function definitions remain unchanged...]
+
+Public Sub ExpandMultipleSubnets()
+    ' [Previous ExpandMultipleSubnets code remains the same until the table creation...]
+    
+    ' Add search section
+    With outputWs
+        .Range("F1").Value = "Search (IP or Hostname):"
+        .Range("G1").Value = ""
+        
+        ' Create search button
+        Dim btn As Button
+        Set btn = .Buttons.Add(Range("H1").Left, Range("H1").Top, 80, 20)
+        With btn
+            .OnAction = "SearchDevice"
+            .Caption = "Search"
+            .Name = "SearchButton"
+        End With
+        
+        ' Format search label
+        With .Range("F1")
+            .Font.Bold = True
+            .HorizontalAlignment = xlRight
+        End With
+        
+        ' Format search box
+        With .Range("G1")
+            .Interior.Color = RGB(255, 255, 200)
+            .Borders.LineStyle = xlContinuous
+        End With
+    End With
+    
+    ' [Rest of the ExpandMultipleSubnets code remains the same...]
+End Sub
+
+Public Sub SearchDevice()
+    Dim ws As Worksheet
+    Dim tbl As ListObject
+    Dim searchText As String
+    Dim foundMatch As Boolean
+    
+    ' Set worksheet and get search text
+    Set ws = ThisWorkbook.Sheets("Expanded Subnets")
+    searchText = ws.Range("G1").Value
+    
+    If searchText = "" Then
+        MsgBox "Please enter an IP address or hostname to search.", vbInformation
+        Exit Sub
+    End If
+    
+    ' Reference the table
+    Set tbl = ws.ListObjects("SubnetTable")
+    
+    ' Clear any existing filters
+    If tbl.ShowAutoFilter Then
+        tbl.AutoFilter.ShowAllData
+    End If
+    
+    ' Apply filter for either IP or Hostname
+    tbl.Range.AutoFilter Field:=1, Criteria1:="=" & searchText, _
+        Operator:=xlOr, Criteria2:="=" & searchText
+    
+    ' Check if any matches were found
+    foundMatch = False
+    On Error Resume Next
+    foundMatch = tbl.DataBodyRange.SpecialCells(xlCellTypeVisible).Cells.Count > 0
+    On Error GoTo 0
+    
+    If Not foundMatch Then
+        ' If no IP match, try hostname
+        tbl.Range.AutoFilter Field:=4, Criteria1:="=" & searchText
+        
+        On Error Resume Next
+        foundMatch = tbl.DataBodyRange.SpecialCells(xlCellTypeVisible).Cells.Count > 0
+        On Error GoTo 0
+        
+        If Not foundMatch Then
+            MsgBox "No matching IP address or hostname found.", vbInformation
+            tbl.AutoFilter.ShowAllData
+        End If
+    End If
+    
+    ' Select the first visible cell in the table after filtering
+    If foundMatch Then
+        Dim firstCell As Range
+        On Error Resume Next
+        Set firstCell = tbl.DataBodyRange.SpecialCells(xlCellTypeVisible).Cells(1, 1)
+        On Error GoTo 0
+        If Not firstCell Is Nothing Then
+            firstCell.Select
+        End If
+    End If
+End Sub
+
+Public Sub ClearSearch()
+    Dim ws As Worksheet
+    Dim tbl As ListObject
+    
+    Set ws = ThisWorkbook.Sheets("Expanded Subnets")
+    Set tbl = ws.ListObjects("SubnetTable")
+    
+    ' Clear search box
+    ws.Range("G1").Value = ""
+    
+    ' Clear filters
+    If tbl.ShowAutoFilter Then
+        tbl.AutoFilter.ShowAllData
+    End If
+End Sub
+
+Private Sub Worksheet_Change(ByVal Target As Range)
+    ' Add this code to the Sheet module (right-click sheet name, View Code)
+    If Not Intersect(Target, Range("G1")) Is Nothing Then
+        If Target.Value = "" Then
+            Call ClearSearch
+        End If
+    End If
+End Sub
