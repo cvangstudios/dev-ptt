@@ -1,0 +1,16 @@
+# SecureCRT Python 3.x Scripts - Required Packages
+# Install with: pip install -r requirements.txt
+
+# Core networking libraries
+netmiko>=4.2.0          # Network device interaction
+textfsm>=1.1.2          # Template-based text parsing
+ntc-templates>=3.2.0    # Network device templates for TextFSM
+
+# Data handling
+pandas>=2.0.0           # Data manipulation and analysis
+openpyxl>=3.1.2         # Excel file handling
+tabulate>=0.9.0         # Pretty-print tabular data
+pyyaml>=6.0             # YAML file handling
+
+# Optional - for enhanced UI
+rich>=13.4.2            # Rich text formatting in the terminal
