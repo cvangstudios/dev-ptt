@@ -1,0 +1,81 @@
+Sub WebRequestExample()
+    Dim xhr As Object
+    Dim url As String
+    Dim response As String
+    
+    ' Create XMLHTTP object
+    Set xhr = CreateObject("MSXML2.XMLHTTP")
+    
+    ' Set your URL with query parameters
+    url = "https://api.example.com/data?param1=value1&param2=value2"
+    
+    ' Open connection (GET method)
+    xhr.Open "GET", url, False
+    
+    ' Send the request
+    xhr.send
+    
+    ' Get the response text
+    response = xhr.responseText
+    
+    ' Print the HTTP status code
+    Debug.Print "Status Code: " & xhr.Status & " " & xhr.statusText
+    
+    ' Print response headers
+    Debug.Print "Content Type: " & xhr.getResponseHeader("Content-Type")
+    
+    ' Print the full response in the Immediate Window
+    Debug.Print "Response:"
+    Debug.Print response
+    
+    ' Print the response to a worksheet for easier viewing
+    Dim ws As Worksheet
+    
+    ' Check if the sheet exists, if not create it
+    On Error Resume Next
+    Set ws = ThisWorkbook.Sheets("ResponseData")
+    If ws Is Nothing Then
+        Set ws = ThisWorkbook.Worksheets.Add
+        ws.Name = "ResponseData"
+    End If
+    On Error GoTo 0
+    
+    ' Clear previous data
+    ws.Cells.Clear
+    
+    ' Add headers
+    ws.Range("A1") = "URL"
+    ws.Range("B1") = "Status"
+    ws.Range("C1") = "Response"
+    
+    ' Add data
+    ws.Range("A2") = url
+    ws.Range("B2") = xhr.Status
+    ws.Range("C2") = response
+    
+    ' Auto-fit columns for better visibility
+    ws.Columns("A:C").AutoFit
+    
+    ' If response is very long, create a text file
+    If Len(response) > 32000 Then  ' Excel cell character limit
+        Dim fso As Object
+        Dim txtFile As Object
+        Dim filePath As String
+        
+        filePath = ThisWorkbook.Path & "\response_data.txt"
+        
+        Set fso = CreateObject("Scripting.FileSystemObject")
+        Set txtFile = fso.CreateTextFile(filePath, True)
+        
+        txtFile.Write response
+        txtFile.Close
+        
+        MsgBox "Response was too large for Excel cell. Written to: " & filePath
+    End If
+    
+    ' Process the response (assuming JSON format)
+    ParseAndDisplayResponse response
+    
+    ' Clean up
+    Set xhr = Nothing
+End Sub
