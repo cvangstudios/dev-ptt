@@ -60,24 +60,34 @@ class PingScanner:
         """
         return '/' in address and not self.is_valid_ip(address)
     
-    def is_valid_hostname(self, hostname):
+    def is_valid_hostname(self, hostname, with_domain=False):
         """
         Check if a hostname is valid according to RFC standards
         
         Args:
             hostname (str): Hostname to validate
+            with_domain (bool): Whether to append default domain before validation
             
         Returns:
             bool: True if valid hostname, False otherwise
         """
-        if not hostname or len(hostname) > 253:
+        if not hostname:
+            return False
+        
+        # If requested and no dot present, append default domain for validation
+        if with_domain and '.' not in hostname and self.default_domain:
+            test_hostname = f"{hostname}.{self.default_domain}"
+        else:
+            test_hostname = hostname
+            
+        if len(test_hostname) > 253:
             return False
         
         # Remove leading/trailing dots
-        hostname = hostname.rstrip('.')
+        test_hostname = test_hostname.rstrip('.')
         
         # Check each label (part between dots)
-        labels = hostname.split('.')
+        labels = test_hostname.split('.')
         for label in labels:
             # Labels must be 1-63 characters
             if not label or len(label) > 63:
@@ -104,12 +114,14 @@ class PingScanner:
         try:
             # Clean up the hostname
             hostname = hostname.strip()
+            original_hostname = hostname
             
             # If hostname doesn't contain a dot and we have a default domain, append it
             if '.' not in hostname and self.default_domain:
                 hostname = f"{hostname}.{self.default_domain}"
+                print(f"    Appending domain: {original_hostname} -> {hostname}")
             
-            # Validate hostname format
+            # Validate hostname format (using the final hostname with domain)
             if not self.is_valid_hostname(hostname):
                 print(f"  Invalid hostname format: {hostname}")
                 return None
