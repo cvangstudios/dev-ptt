@@ -15,7 +15,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import platform
 
 class PingScanner:
-    def __init__(self, max_workers=20, timeout=1, packet_size=32):
+    def __init__(self, max_workers=20, timeout=1, packet_size=32, default_domain=""):
         """
         Initialize the ping scanner
         
@@ -23,14 +23,63 @@ class PingScanner:
             max_workers (int): Maximum number of concurrent ping operations
             timeout (int): Ping timeout in seconds
             packet_size (int): Ping packet size in bytes
+            default_domain (str): Default domain to append to hostnames without FQDN
         """
         self.max_workers = max_workers
         self.timeout = timeout
         self.packet_size = packet_size
+        self.default_domain = default_domain
         self.os_type = platform.system().lower()
         self.results = []
         
-    def ping_host(self, ip):
+    def is_valid_ip(self, address):
+        """
+        Check if an address is a valid IP address
+        
+        Args:
+            address (str): Address to check
+            
+        Returns:
+            bool: True if valid IP, False otherwise
+        """
+        try:
+            ipaddress.ip_address(address)
+            return True
+        except ValueError:
+            return False
+    
+    def is_valid_cidr(self, address):
+        """
+        Check if an address is a valid CIDR block
+        
+        Args:
+            address (str): Address to check
+            
+        Returns:
+            bool: True if valid CIDR, False otherwise
+        """
+        return '/' in address and not self.is_valid_ip(address)
+    
+    def resolve_hostname(self, hostname):
+        """
+        Resolve hostname to IP address
+        
+        Args:
+            hostname (str): Hostname to resolve
+            
+        Returns:
+            str or None: IP address if resolved, None if failed
+        """
+        try:
+            # If hostname doesn't contain a dot and we have a default domain, append it
+            if '.' not in hostname and self.default_domain:
+                hostname = f"{hostname}.{self.default_domain}"
+            
+            # Resolve hostname to IP
+            ip = socket.gethostbyname(hostname)
+            return ip
+        except socket.gaierror:
+            return None
         """
         Ping a single host and resolve its hostname
         
@@ -88,7 +137,7 @@ class PingScanner:
                 
                 # Try to resolve hostname
                 try:
-                    hostname = socket.gethostbyaddr(str(ip))[0]
+                    hostname = socket.gethostbyaddr(str(target))[0]
                     result['hostname'] = hostname
                 except socket.herror:
                     result['hostname'] = 'No PTR record'
@@ -125,29 +174,42 @@ class PingScanner:
     
     def scan_targets(self, targets):
         """
-        Scan multiple targets (IPs or CIDR blocks)
+        Scan multiple targets (IPs, hostnames, or CIDR blocks)
         
         Args:
-            targets (list): List of IP addresses or CIDR blocks
+            targets (list): List of IP addresses, hostnames, or CIDR blocks
         """
         all_ips = []
+        hostname_targets = []
+        failed_resolutions = []
         
-        # Parse targets and build IP list
+        # First pass: categorize targets
         for target in targets:
-            if '/' in target:
+            if self.is_valid_cidr(target):
                 # It's a CIDR block
                 print(f"Expanding CIDR block: {target}")
                 hosts = self.get_hosts_from_cidr(target)
-                all_ips.extend(hosts)
+                all_ips.extend([(ip, None) for ip in hosts])
                 print(f"Added {len(hosts)} hosts from {target}")
-            else:
+            elif self.is_valid_ip(target):
                 # It's a single IP
-                try:
-                    ip = ipaddress.ip_address(target)
-                    all_ips.append(ip)
-                except ValueError:
-                    print(f"Invalid IP address: {target}")
-                    continue
+                all_ips.append((ipaddress.ip_address(target), None))
+            else:
+                # Assume it's a hostname
+                print(f"Resolving hostname: {target}")
+                ip = self.resolve_hostname(target)
+                if ip:
+                    all_ips.append((ipaddress.ip_address(ip), target))
+                    print(f"  {target} -> {ip}")
+                else:
+                    failed_resolutions.append(target)
+                    print(f"  Failed to resolve: {target}")
+        
+        # Report failed resolutions
+        if failed_resolutions:
+            print(f"\nFailed to resolve {len(failed_resolutions)} hostname(s):")
+            for hostname in failed_resolutions:
+                print(f"  - {hostname}")
         
         print(f"\nScanning {len(all_ips)} hosts...")
         print(f"Using {self.max_workers} concurrent workers")
@@ -156,11 +218,11 @@ class PingScanner:
         # Perform concurrent ping scans
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
             # Submit all ping jobs
-            future_to_ip = {executor.submit(self.ping_host, ip): ip for ip in all_ips}
+            future_to_target = {executor.submit(self.ping_host, ip, original): (ip, original) for ip, original in all_ips}
             
             # Process completed futures
             completed = 0
-            for future in as_completed(future_to_ip):
+            for future in as_completed(future_to_target):
                 result = future.result()
                 self.results.append(result)
                 completed += 1
@@ -187,7 +249,7 @@ class PingScanner:
         
         # Write to CSV
         with open(filename, 'w', newline='', encoding='utf-8') as csvfile:
-            fieldnames = ['ip', 'status', 'hostname', 'response_time']
+            fieldnames = ['ip', 'status', 'hostname', 'response_time', 'original_target']
             writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
             
             writer.writeheader()
@@ -215,7 +277,8 @@ class PingScanner:
             for host in live_hosts[:5]:
                 hostname = host['hostname'] if host['hostname'] else 'No hostname'
                 response = host['response_time'] if host['response_time'] else 'N/A'
-                print(f"  {host['ip']} ({hostname}) - {response}")
+                original = f" (from {host['original_target']})" if host['original_target'] != host['ip'] else ""
+                print(f"  {host['ip']} ({hostname}) - {response}{original}")
 
     def read_hosts_file(self, filename='hosts.txt'):
         """
@@ -245,13 +308,27 @@ class PingScanner:
                             targets.append(target)
                             
             print(f"Loaded {len(targets)} targets from {filename}")
+            
+            # Check if we have any IP addresses vs hostnames
+            ip_count = sum(1 for t in targets if self.is_valid_ip(t) or self.is_valid_cidr(t))
+            hostname_count = len(targets) - ip_count
+            
+            if hostname_count > 0:
+                print(f"Found {ip_count} IP/CIDR targets and {hostname_count} hostname targets")
+                if self.default_domain:
+                    print(f"Default domain for hostnames: {self.default_domain}")
+                else:
+                    print("No default domain set - will use hostnames as-is")
+            
             return targets
             
         except FileNotFoundError:
             print(f"Error: File '{filename}' not found")
-            print(f"Please create a hosts.txt file with IP addresses or CIDR blocks")
+            print(f"Please create a hosts.txt file with IP addresses, hostnames, or CIDR blocks")
             print("Example hosts.txt content:")
             print("  192.168.1.1")
+            print("  server1")
+            print("  web-server.company.com")
             print("  10.0.0.0/24")
             print("  172.16.1.0/29")
             print("  # This is a comment")
@@ -266,11 +343,12 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python ping_scanner.py                    # Scan hosts from hosts.txt
-  python ping_scanner.py -f myfile.txt      # Scan hosts from custom file
-  python ping_scanner.py -w 100 -t 2       # Custom workers and timeout
-  python ping_scanner.py -s 64 -w 30       # 64-byte packets with 30 workers
-  python ping_scanner.py -s 1472            # Large packet size test
+  python ping_scanner.py                              # Scan hosts from hosts.txt
+  python ping_scanner.py -f myfile.txt                # Scan hosts from custom file
+  python ping_scanner.py -d company.com               # Set default domain for hostnames
+  python ping_scanner.py -w 100 -t 2                  # Custom workers and timeout
+  python ping_scanner.py -s 64 -w 30                  # 64-byte packets with 30 workers
+  python ping_scanner.py -d local.lan -f servers.txt  # Scan with domain and custom file
         """
     )
     
@@ -293,6 +371,13 @@ Examples:
         type=int,
         default=1,
         help='Ping timeout in seconds (default: 1)'
+    )
+    
+    parser.add_argument(
+        '-d', '--domain',
+        type=str,
+        default="",
+        help='Default domain to append to hostnames without FQDN (e.g., company.com)'
     )
     
     parser.add_argument(
@@ -324,7 +409,7 @@ Examples:
         sys.exit(1)
     
     # Create scanner and run scan
-    scanner = PingScanner(max_workers=args.workers, timeout=args.timeout, packet_size=args.size)
+    scanner = PingScanner(max_workers=args.workers, timeout=args.timeout, packet_size=args.size, default_domain=args.domain)
     
     # Read targets from file
     targets = scanner.read_hosts_file(args.file)
