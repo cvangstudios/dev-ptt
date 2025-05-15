@@ -60,9 +60,40 @@ class PingScanner:
         """
         return '/' in address and not self.is_valid_ip(address)
     
+    def is_valid_hostname(self, hostname):
+        """
+        Check if a hostname is valid according to RFC standards
+        
+        Args:
+            hostname (str): Hostname to validate
+            
+        Returns:
+            bool: True if valid hostname, False otherwise
+        """
+        if not hostname or len(hostname) > 253:
+            return False
+        
+        # Remove leading/trailing dots
+        hostname = hostname.rstrip('.')
+        
+        # Check each label (part between dots)
+        labels = hostname.split('.')
+        for label in labels:
+            # Labels must be 1-63 characters
+            if not label or len(label) > 63:
+                return False
+            # Labels must start and end with alphanumeric
+            if not label[0].isalnum() or not label[-1].isalnum():
+                return False
+            # Labels can contain hyphens but not at start/end
+            if not all(c.isalnum() or c == '-' for c in label):
+                return False
+        
+        return True
+    
     def resolve_hostname(self, hostname):
         """
-        Resolve hostname to IP address
+        Resolve hostname to IP address with validation
         
         Args:
             hostname (str): Hostname to resolve
@@ -71,14 +102,29 @@ class PingScanner:
             str or None: IP address if resolved, None if failed
         """
         try:
+            # Clean up the hostname
+            hostname = hostname.strip()
+            
             # If hostname doesn't contain a dot and we have a default domain, append it
             if '.' not in hostname and self.default_domain:
                 hostname = f"{hostname}.{self.default_domain}"
             
+            # Validate hostname format
+            if not self.is_valid_hostname(hostname):
+                print(f"  Invalid hostname format: {hostname}")
+                return None
+            
             # Resolve hostname to IP
             ip = socket.gethostbyname(hostname)
             return ip
-        except socket.gaierror:
+        except socket.gaierror as e:
+            print(f"  DNS resolution failed for {hostname}: {e}")
+            return None
+        except UnicodeError as e:
+            print(f"  Invalid hostname encoding for {hostname}: {e}")
+            return None
+        except Exception as e:
+            print(f"  Unexpected error resolving {hostname}: {e}")
             return None
         """
         Ping a single host and resolve its hostname
@@ -282,7 +328,7 @@ class PingScanner:
 
     def read_hosts_file(self, filename='hosts.txt'):
         """
-        Read hosts and CIDR blocks from a file
+        Read hosts and CIDR blocks from a file with validation
         
         Args:
             filename (str): Name of the file containing hosts/CIDR blocks
@@ -303,9 +349,12 @@ class PingScanner:
                     # Split on whitespace to handle multiple targets per line
                     line_targets = line.split()
                     for target in line_targets:
-                        # Basic validation
-                        if target:
+                        # Clean and validate target
+                        target = target.strip()
+                        if target and len(target) <= 253:  # Max hostname length
                             targets.append(target)
+                        elif target:
+                            print(f"Warning: Skipping invalid target on line {line_num}: {target} (too long)")
                             
             print(f"Loaded {len(targets)} targets from {filename}")
             
