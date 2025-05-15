@@ -230,32 +230,40 @@ class PingScanner:
         failed_resolutions = []
         
         # First pass: categorize targets
-        for target in targets:
-            if self.is_valid_cidr(target):
-                # It's a CIDR block
-                print(f"Expanding CIDR block: {target}")
-                hosts = self.get_hosts_from_cidr(target)
-                all_ips.extend([(ip, None) for ip in hosts])
-                print(f"Added {len(hosts)} hosts from {target}")
-            elif self.is_valid_ip(target):
-                # It's a single IP
-                all_ips.append((ipaddress.ip_address(target), None))
-            else:
-                # Assume it's a hostname
-                print(f"Resolving hostname: {target}")
-                ip = self.resolve_hostname(target)
-                if ip:
-                    all_ips.append((ipaddress.ip_address(ip), target))
-                    print(f"  {target} -> {ip}")
+        for i, target in enumerate(targets):
+            print(f"Processing target {i+1}/{len(targets)}: '{target}'")
+            
+            try:
+                if self.is_valid_cidr(target):
+                    # It's a CIDR block
+                    print(f"  Expanding CIDR block: {target}")
+                    hosts = self.get_hosts_from_cidr(target)
+                    all_ips.extend([(ip, None) for ip in hosts])
+                    print(f"  Added {len(hosts)} hosts from {target}")
+                elif self.is_valid_ip(target):
+                    # It's a single IP
+                    print(f"  Valid IP: {target}")
+                    all_ips.append((ipaddress.ip_address(target), None))
                 else:
-                    failed_resolutions.append(target)
-                    print(f"  Failed to resolve: {target}")
+                    # Assume it's a hostname
+                    print(f"  Attempting to resolve hostname: {target}")
+                    ip = self.resolve_hostname(target)
+                    if ip:
+                        all_ips.append((ipaddress.ip_address(ip), target))
+                        print(f"    {target} -> {ip}")
+                    else:
+                        failed_resolutions.append(target)
+                        print(f"    Failed to resolve: {target}")
+            except Exception as e:
+                print(f"  Error processing '{target}': {e}")
+                failed_resolutions.append(target)
+                continue
         
         # Report failed resolutions
         if failed_resolutions:
-            print(f"\nFailed to resolve {len(failed_resolutions)} hostname(s):")
-            for hostname in failed_resolutions:
-                print(f"  - {hostname}")
+            print(f"\nFailed to resolve {len(failed_resolutions)} target(s):")
+            for target in failed_resolutions:
+                print(f"  - {target}")
         
         print(f"\nScanning {len(all_ips)} hosts...")
         print(f"Using {self.max_workers} concurrent workers")
@@ -287,7 +295,7 @@ class PingScanner:
             filename (str): Optional custom filename
         """
         if not filename:
-            timestamp = datetime.now().strftime("%d_%m_%y_%H_%M")
+            timestamp = datetime.now().strftime("%d%m%y_%H%M%S")
             filename = f"ping_sweep_results_{timestamp}.csv"
         
         # Sort results by IP address
@@ -342,6 +350,7 @@ class PingScanner:
             with open(filename, 'r') as f:
                 for line_num, line in enumerate(f, 1):
                     # Strip whitespace and skip empty lines/comments
+                    original_line = line
                     line = line.strip()
                     if not line or line.startswith('#'):
                         continue
@@ -351,12 +360,35 @@ class PingScanner:
                     for target in line_targets:
                         # Clean and validate target
                         target = target.strip()
-                        if target and len(target) <= 253:  # Max hostname length
-                            targets.append(target)
-                        elif target:
-                            print(f"Warning: Skipping invalid target on line {line_num}: {target} (too long)")
+                        
+                        # Debug output for problematic entries
+                        if not target:
+                            print(f"Warning: Empty target on line {line_num}")
+                            continue
                             
-            print(f"Loaded {len(targets)} targets from {filename}")
+                        if len(target) > 253:
+                            print(f"Warning: Target too long on line {line_num}: '{target}' ({len(target)} chars)")
+                            continue
+                        
+                        # Check for common problematic characters
+                        if any(ord(c) > 127 for c in target):
+                            print(f"Warning: Non-ASCII characters in target on line {line_num}: '{target}'")
+                            # Try to encode to ASCII to catch issues early
+                            try:
+                                target.encode('ascii')
+                            except UnicodeEncodeError:
+                                print(f"  Skipping due to encoding issues")
+                                continue
+                        
+                        # Check for multiple consecutive dots
+                        if '..' in target:
+                            print(f"Warning: Multiple consecutive dots in target on line {line_num}: '{target}'")
+                            continue
+                            
+                        # Add valid targets
+                        targets.append(target)
+                        
+            print(f"Loaded {len(targets)} valid targets from {filename}")
             
             # Check if we have any IP addresses vs hostnames
             ip_count = sum(1 for t in targets if self.is_valid_ip(t) or self.is_valid_cidr(t))
