@@ -14,6 +14,11 @@ from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import platform
 
+# Force reload if running interactively
+if __name__ == "__main__":
+    import importlib
+    importlib.reload(sys.modules[__name__] if __name__ in sys.modules else sys.modules[__file__.split('.')[0]])
+
 class PingScanner:
     def __init__(self, max_workers=20, timeout=1, packet_size=32, default_domain=""):
         """
@@ -507,6 +512,10 @@ Examples:
     
     # Create scanner and run scan
     scanner = PingScanner(max_workers=args.workers, timeout=args.timeout, packet_size=args.size, default_domain=args.domain)
+    
+    # Debug: Check if ping_host method exists
+    print(f"DEBUG: ping_host method exists: {hasattr(scanner, 'ping_host')}")
+    print(f"DEBUG: Available methods: {[method for method in dir(scanner) if not method.startswith('_')]}")
     
     # Read targets from file
     targets = scanner.read_hosts_file(args.file)
