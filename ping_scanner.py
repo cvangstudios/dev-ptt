@@ -138,26 +138,30 @@ class PingScanner:
         except Exception as e:
             print(f"  Unexpected error resolving {hostname}: {e}")
             return None
+    
+    def ping_host(self, target, original_target=None):
         """
         Ping a single host and resolve its hostname
         
         Args:
-            ip (str): IP address to ping
+            target (str): IP address to ping
+            original_target (str): Original hostname if target was resolved from hostname
             
         Returns:
-            dict: Result dictionary with ip, status, hostname, and response_time
+            dict: Result dictionary with ip, status, hostname, response_time, and original_target
         """
         # Choose ping command based on OS
         if self.os_type == "windows":
-            ping_cmd = ["ping", "-n", "1", "-w", str(self.timeout * 1000), "-l", str(self.packet_size), str(ip)]
+            ping_cmd = ["ping", "-n", "1", "-w", str(self.timeout * 1000), "-l", str(self.packet_size), str(target)]
         else:
-            ping_cmd = ["ping", "-c", "1", "-W", str(self.timeout), "-s", str(self.packet_size), str(ip)]
+            ping_cmd = ["ping", "-c", "1", "-W", str(self.timeout), "-s", str(self.packet_size), str(target)]
         
         result = {
-            'ip': str(ip),
+            'ip': str(target),
             'status': 'Down',
             'hostname': '',
-            'response_time': ''
+            'response_time': '',
+            'original_target': original_target or str(target)
         }
         
         try:
