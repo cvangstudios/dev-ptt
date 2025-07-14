@@ -619,71 +619,97 @@ def write_audit_report(output_file: str, source_file: str, hostname: str,
     """Write detailed audit report to file"""
     
     print(f"Generating audit report for {hostname}...")
+    print(f"Writing to file: {output_file}")
     
-    with open(output_file, 'w') as f:
-        f.write("=" * 80 + "\n")
-        f.write(f"CYCLADES SNMP CONFIGURATION AUDIT REPORT\n")
-        f.write("=" * 80 + "\n")
-        f.write(f"Source File: {source_file}\n")
-        f.write(f"Hostname: {hostname}\n")
-        f.write(f"Audit Date: {os.popen('date').read().strip()}\n")
-        f.write("=" * 80 + "\n\n")
-        
-        # SNMP Configuration Summary
-        f.write("SNMP CONFIGURATION BY COMMUNITY\n")
-        f.write("-" * 40 + "\n")
-        f.write(validator.get_yaml())
-        f.write("\n")
-        
-        # Overall Summary
-        overall = validation['overall_summary']
-        f.write("OVERALL COMPLIANCE SUMMARY\n")
-        f.write("-" * 40 + "\n")
-        f.write(f"Overall Compliance: {'PASS' if overall['overall_compliance'] else 'FAIL'}\n")
-        f.write(f"Total Communities: {overall['total_communities']}\n")
-        f.write(f"Compliant Communities: {overall['compliant_communities']}\n")
-        f.write(f"Community Compliance Rate: {overall['community_compliance_rate']}%\n\n")
-        
-        # ACL Networks
-        f.write("ACL INTENT NETWORKS\n")
-        f.write("-" * 40 + "\n")
-        for network in validation['acl_networks']:
-            f.write(f"  {network}\n")
-        f.write("\n")
-        
-        # Per-Community Details
-        f.write("DETAILED VALIDATION BY COMMUNITY\n")
-        f.write("-" * 40 + "\n")
-        
-        for community, results in validation['validation_by_community'].items():
-            f.write(f"\nCommunity: {community}\n")
-            f.write(f"Status: {'COMPLIANT' if results['compliant'] else 'NON-COMPLIANT'}\n")
-            f.write(f"Networks Matched: {results['summary']['matching_count']}/{results['summary']['total_acl_networks']}\n")
-            f.write(f"Compliance Percentage: {results['summary']['compliance_percentage']}%\n")
+    try:
+        with open(output_file, 'w') as f:
+            print("Writing header...")
+            f.write("=" * 80 + "\n")
+            f.write(f"CYCLADES SNMP CONFIGURATION AUDIT REPORT\n")
+            f.write("=" * 80 + "\n")
+            f.write(f"Source File: {source_file}\n")
+            f.write(f"Hostname: {hostname}\n")
+            f.write(f"Audit Date: {os.popen('date').read().strip()}\n")
+            f.write("=" * 80 + "\n\n")
             
-            if results['matching_networks']:
-                f.write(f"✓ Matching Networks:\n")
-                for network in results['matching_networks']:
-                    f.write(f"    {network}\n")
+            print("Writing SNMP configuration...")
+            # SNMP Configuration Summary
+            f.write("SNMP CONFIGURATION BY COMMUNITY\n")
+            f.write("-" * 40 + "\n")
+            f.write(validator.get_yaml())
+            f.write("\n")
             
-            if results['missing_networks']:
-                f.write(f"✗ Missing Networks (in ACL but not in SNMP config):\n")
-                for network in results['missing_networks']:
-                    f.write(f"    {network}\n")
+            print("Writing overall summary...")
+            # Overall Summary
+            overall = validation['overall_summary']
+            f.write("OVERALL COMPLIANCE SUMMARY\n")
+            f.write("-" * 40 + "\n")
+            f.write(f"Overall Compliance: {'PASS' if overall['overall_compliance'] else 'FAIL'}\n")
+            f.write(f"Total Communities: {overall['total_communities']}\n")
+            f.write(f"Compliant Communities: {overall['compliant_communities']}\n")
+            f.write(f"Community Compliance Rate: {overall['community_compliance_rate']}%\n\n")
             
-            if results['extra_networks']:
-                f.write(f"⚠ Extra Networks (in SNMP config but not in ACL):\n")
-                for network in results['extra_networks']:
-                    f.write(f"    {network}\n")
+            print("Writing ACL networks...")
+            # ACL Networks
+            f.write("ACL INTENT NETWORKS\n")
+            f.write("-" * 40 + "\n")
+            for network in validation['acl_networks']:
+                f.write(f"  {network}\n")
+            f.write("\n")
             
-            f.write("\n" + "-" * 40 + "\n")
+            print("Writing detailed validation by community...")
+            # Per-Community Details
+            f.write("DETAILED VALIDATION BY COMMUNITY\n")
+            f.write("-" * 40 + "\n")
+            
+            community_count = len(validation['validation_by_community'])
+            for i, (community, results) in enumerate(validation['validation_by_community'].items(), 1):
+                print(f"Processing community {i}/{community_count}: {community}")
+                
+                f.write(f"\nCommunity: {community}\n")
+                f.write(f"Status: {'COMPLIANT' if results['compliant'] else 'NON-COMPLIANT'}\n")
+                f.write(f"Networks Matched: {results['summary']['matching_count']}/{results['summary']['total_acl_networks']}\n")
+                f.write(f"Compliance Percentage: {results['summary']['compliance_percentage']}%\n")
+                
+                if results['matching_networks']:
+                    f.write(f"✓ Matching Networks:\n")
+                    for network in results['matching_networks']:
+                        f.write(f"    {network}\n")
+                
+                if results['missing_networks']:
+                    f.write(f"✗ Missing Networks (in ACL but not in SNMP config):\n")
+                    for network in results['missing_networks']:
+                        f.write(f"    {network}\n")
+                    
+                    # Add configuration commands to add missing networks
+                    f.write(f"\n  CONFIGURATION TO ADD MISSING NETWORKS:\n")
+                    for network in results['missing_networks']:
+                        f.write(f"  add\n")
+                        f.write(f"  set name={community}\n")
+                        f.write(f"  set version=version_v2\n")
+                        f.write(f"  set source={network}\n")
+                        f.write(f"  set permission=read_only\n")
+                        f.write(f"  save --cancelOnError\n")
+                        f.write(f"\n")
+                
+                if results['extra_networks']:
+                    f.write(f"⚠ Extra Networks (in SNMP config but not in ACL):\n")
+                    for network in results['extra_networks']:
+                        f.write(f"    {network}\n")
+                
+                f.write("\n" + "-" * 40 + "\n")
+            
+            print("Writing raw JSON data...")
+            # Raw JSON Data
+            f.write("\nRAW VALIDATION DATA (JSON)\n")
+            f.write("-" * 40 + "\n")
+            f.write(json.dumps(validation, indent=2))
         
-        # Raw JSON Data
-        f.write("\nRAW VALIDATION DATA (JSON)\n")
-        f.write("-" * 40 + "\n")
-        f.write(json.dumps(validation, indent=2))
-    
-    print(f"Audit report written successfully to {output_file}")
+        print(f"Audit report written successfully to {output_file}")
+        
+    except Exception as e:
+        print(f"ERROR writing audit report: {e}")
+        raise
 
 def main():
     """Main execution function"""
