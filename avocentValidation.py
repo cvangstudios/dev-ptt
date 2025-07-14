@@ -634,7 +634,10 @@ def process_uot_files(folder_path: str = ".") -> None:
             else:
                 print(f"PASS - No missing configuration needed for {hostname}")
             
-            print(f"PASS - Avocent audit complete for {hostname}")
+            # Show actual compliance status
+            overall_compliance = validation.get('overall_summary', {}).get('overall_compliance', False)
+            compliance_status = "PASS" if overall_compliance else "FAIL"
+            print(f"{compliance_status} - Avocent audit complete for {hostname} - Compliance: {compliance_status}")
             print("=" * 60)
             
         except Exception as e:
