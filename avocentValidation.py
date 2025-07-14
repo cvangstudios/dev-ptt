@@ -601,18 +601,69 @@ def process_uot_files(folder_path: str = ".") -> None:
             validation = validator.validate_from_files(acl_file, config_file_path)
             
             # Generate output filename
-            output_file = os.path.join(folder_path, f"config-audit-{hostname}.txt")
+            audit_folder = os.path.join(folder_path, "avocent_audit")
+            
+            # Create audit folder if it doesn't exist
+            if not os.path.exists(audit_folder):
+                os.makedirs(audit_folder)
+                print(f"Created audit folder: {audit_folder}")
+            
+            output_file = os.path.join(audit_folder, f"config-audit-{hostname}.txt")
             
             # Write results to output file
             print(f"Writing audit report to: {output_file}")
             write_audit_report(output_file, log_file, hostname, validation, validator)
             
-            print(f"✓ Avocent audit complete for {hostname} - results written to {output_file}")
+            # Generate and save missing configuration
+            config_file_path = os.path.join(audit_folder, f"missing-config-{hostname}.txt")
+            missing_config = generate_missing_config(validation, hostname)
+            
+            if missing_config:
+                print(f"\n=== MISSING CONFIGURATION FOR {hostname} ===")
+                print(missing_config)
+                print("=" * 60)
+                
+                # Save missing config to file
+                with open(config_file_path, 'w') as config_f:
+                    config_f.write(f"# Missing SNMP Configuration for {hostname}\n")
+                    config_f.write(f"# Generated from audit\n\n")
+                    config_f.write("cd /network/snmp/\n")
+                    config_f.write(missing_config)
+                
+                print(f"Missing configuration saved to: {config_file_path}")
+            else:
+                print(f"✓ No missing configuration needed for {hostname}")
+            
+            print(f"✓ Avocent audit complete for {hostname}")
             print("=" * 60)
             
         except Exception as e:
             print(f"✗ Error processing {log_file}: {e}")
             continue
+
+def generate_missing_config(validation: Dict, hostname: str) -> str:
+    """Generate configuration commands for missing networks"""
+    
+    config_lines = []
+    
+    community_results = validation.get('validation_by_community', {})
+    
+    for community, results in community_results.items():
+        missing_networks = results.get('missing_networks', [])
+        
+        if missing_networks:
+            config_lines.append(f"# Missing networks for community: {community}")
+            
+            for network in missing_networks:
+                config_lines.append("add")
+                config_lines.append(f"set name={community}")
+                config_lines.append("set version=version_v2")
+                config_lines.append(f"set source={network}")
+                config_lines.append("set permission=read_only")
+                config_lines.append("save --cancelOnError")
+                config_lines.append("")  # Empty line between blocks
+    
+    return "\n".join(config_lines) if config_lines else ""
 
 def write_audit_report(output_file: str, source_file: str, hostname: str, 
                       validation: Dict, validator: SNMPACLValidator) -> None:
@@ -707,6 +758,77 @@ def write_audit_report(output_file: str, source_file: str, hostname: str,
             f.write(f"Community Compliance Rate: {overall.get('community_compliance_rate', 0)}%\n\n")
             f.flush()
             print("Overall summary written successfully")
+            
+            print("Writing ACL networks...")
+            acl_networks = validation.get('acl_networks', [])
+            print(f"Found {len(acl_networks)} ACL networks to write")
+            
+            f.write("ACL INTENT NETWORKS\n")
+            f.write("-" * 40 + "\n")
+            for i, network in enumerate(acl_networks):
+                if i % 10 == 0:  # Progress indicator every 10 networks
+                    print(f"  Writing ACL network {i+1}/{len(acl_networks)}")
+                f.write(f"  {network}\n")
+            f.write("\n")
+            f.flush()
+            
+            print("Writing detailed validation by community...")
+            community_results = validation.get('validation_by_community', {})
+            community_count = len(community_results)
+            print(f"Processing {community_count} communities...")
+            
+            f.write("DETAILED VALIDATION BY COMMUNITY\n")
+            f.write("-" * 40 + "\n")
+            
+            for i, (community, results) in enumerate(community_results.items(), 1):
+                print(f"Processing community {i}/{community_count}: {community}")
+                
+                f.write(f"\nCommunity: {community}\n")
+                f.write(f"Status: {'COMPLIANT' if results.get('compliant', False) else 'NON-COMPLIANT'}\n")
+                
+                summary = results.get('summary', {})
+                f.write(f"Networks Matched: {summary.get('matching_count', 0)}/{summary.get('total_acl_networks', 0)}\n")
+                f.write(f"Compliance Percentage: {summary.get('compliance_percentage', 0)}%\n")
+                
+                matching_networks = results.get('matching_networks', [])
+                if matching_networks:
+                    print(f"  Writing {len(matching_networks)} matching networks")
+                    f.write(f"✓ Matching Networks:\n")
+                    for network in matching_networks:
+                        f.write(f"    {network}\n")
+                
+                missing_networks = results.get('missing_networks', [])
+                if missing_networks:
+                    print(f"  Found {len(missing_networks)} missing networks for community {community}")
+                    f.write(f"✗ Missing Networks (in ACL but not in SNMP config):\n")
+                    for network in missing_networks:
+                        f.write(f"    {network}\n")
+                    
+                    print(f"  Writing configuration for {len(missing_networks)} missing networks")
+                    # Add configuration commands to add missing networks
+                    f.write(f"\n  CONFIGURATION TO ADD MISSING NETWORKS:\n")
+                    for j, network in enumerate(missing_networks):
+                        if j % 5 == 0:  # Progress every 5 networks
+                            print(f"    Writing config block {j+1}/{len(missing_networks)}")
+                        f.write(f"  add\n")
+                        f.write(f"  set name={community}\n")
+                        f.write(f"  set version=version_v2\n")
+                        f.write(f"  set source={network}\n")
+                        f.write(f"  set permission=read_only\n")
+                        f.write(f"  save --cancelOnError\n")
+                        f.write(f"\n")
+                else:
+                    print(f"  No missing networks for community {community}")
+                
+                extra_networks = results.get('extra_networks', [])
+                if extra_networks:
+                    print(f"  Writing {len(extra_networks)} extra networks")
+                    f.write(f"⚠ Extra Networks (in SNMP config but not in ACL):\n")
+                    for network in extra_networks:
+                        f.write(f"    {network}\n")
+                
+                f.write("\n" + "-" * 40 + "\n")
+                f.flush()
             
             # Simplified rest of the report for now
             print("Writing simplified rest of report...")
