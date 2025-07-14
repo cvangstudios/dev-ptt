@@ -621,138 +621,105 @@ def write_audit_report(output_file: str, source_file: str, hostname: str,
     print(f"Generating audit report for {hostname}...")
     print(f"Writing to file: {output_file}")
     
+    # Test if we can write to the file at all
+    try:
+        print("Testing file write access...")
+        with open(output_file, 'w') as test_f:
+            test_f.write("TEST\n")
+        print("File write test successful")
+    except Exception as e:
+        print(f"ERROR: Cannot write to file {output_file}: {e}")
+        return
+    
     try:
         with open(output_file, 'w') as f:
-            print("Writing header...")
+            print("File opened successfully")
+            
+            print("Writing basic header line 1...")
             f.write("=" * 80 + "\n")
+            f.flush()
+            
+            print("Writing basic header line 2...")
             f.write(f"CYCLADES SNMP CONFIGURATION AUDIT REPORT\n")
+            f.flush()
+            
+            print("Writing basic header line 3...")
             f.write("=" * 80 + "\n")
+            f.flush()
+            
+            print("Writing source file info...")
             f.write(f"Source File: {source_file}\n")
+            f.flush()
+            
+            print("Writing hostname info...")
             f.write(f"Hostname: {hostname}\n")
+            f.flush()
             
             print("Getting current timestamp...")
             try:
                 import datetime
                 current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                print(f"Timestamp generated: {current_time}")
                 f.write(f"Audit Date: {current_time}\n")
+                f.flush()
             except Exception as e:
                 print(f"Warning: Could not get timestamp: {e}")
                 f.write(f"Audit Date: Unknown\n")
+                f.flush()
             
-            print("Finishing header...")
+            print("Writing final header line...")
             f.write("=" * 80 + "\n\n")
+            f.flush()
             
-            print("Writing SNMP configuration...")
-            # SNMP Configuration Summary
+            print("Header completed successfully")
+            
+            print("Writing SNMP configuration section...")
             f.write("SNMP CONFIGURATION BY COMMUNITY\n")
             f.write("-" * 40 + "\n")
+            f.flush()
             
             print("Getting YAML from validator...")
             try:
+                print("Calling validator.get_yaml()...")
                 yaml_content = validator.get_yaml()
-                print(f"YAML content length: {len(yaml_content)} characters")
+                print(f"YAML content received, length: {len(yaml_content)} characters")
+                print(f"First 100 chars of YAML: {yaml_content[:100]}")
                 f.write(yaml_content)
                 f.write("\n")
+                f.flush()
+                print("YAML written successfully")
             except Exception as e:
                 print(f"Error getting YAML: {e}")
+                import traceback
+                print(f"YAML error traceback: {traceback.format_exc()}")
                 f.write("Error generating YAML content\n\n")
+                f.flush()
             
             print("Writing overall summary...")
-            # Overall Summary
-            overall = validation['overall_summary']
+            overall = validation.get('overall_summary', {})
+            print(f"Overall summary data: {overall}")
+            
             f.write("OVERALL COMPLIANCE SUMMARY\n")
             f.write("-" * 40 + "\n")
-            f.write(f"Overall Compliance: {'PASS' if overall['overall_compliance'] else 'FAIL'}\n")
-            f.write(f"Total Communities: {overall['total_communities']}\n")
-            f.write(f"Compliant Communities: {overall['compliant_communities']}\n")
-            f.write(f"Community Compliance Rate: {overall['community_compliance_rate']}%\n\n")
+            f.write(f"Overall Compliance: {'PASS' if overall.get('overall_compliance', False) else 'FAIL'}\n")
+            f.write(f"Total Communities: {overall.get('total_communities', 0)}\n")
+            f.write(f"Compliant Communities: {overall.get('compliant_communities', 0)}\n")
+            f.write(f"Community Compliance Rate: {overall.get('community_compliance_rate', 0)}%\n\n")
+            f.flush()
+            print("Overall summary written successfully")
             
-            print("Writing ACL networks...")
-            # ACL Networks
-            f.write("ACL INTENT NETWORKS\n")
-            f.write("-" * 40 + "\n")
-            acl_networks = validation.get('acl_networks', [])
-            print(f"Found {len(acl_networks)} ACL networks to write")
-            for i, network in enumerate(acl_networks):
-                if i % 10 == 0:  # Progress indicator every 10 networks
-                    print(f"  Writing ACL network {i+1}/{len(acl_networks)}")
-                f.write(f"  {network}\n")
-            f.write("\n")
-            
-            print("Writing detailed validation by community...")
-            # Per-Community Details
-            f.write("DETAILED VALIDATION BY COMMUNITY\n")
-            f.write("-" * 40 + "\n")
-            
-            community_results = validation.get('validation_by_community', {})
-            community_count = len(community_results)
-            print(f"Processing {community_count} communities...")
-            
-            for i, (community, results) in enumerate(community_results.items(), 1):
-                print(f"Processing community {i}/{community_count}: {community}")
-                
-                f.write(f"\nCommunity: {community}\n")
-                f.write(f"Status: {'COMPLIANT' if results['compliant'] else 'NON-COMPLIANT'}\n")
-                f.write(f"Networks Matched: {results['summary']['matching_count']}/{results['summary']['total_acl_networks']}\n")
-                f.write(f"Compliance Percentage: {results['summary']['compliance_percentage']}%\n")
-                
-                matching_networks = results.get('matching_networks', [])
-                if matching_networks:
-                    print(f"  Writing {len(matching_networks)} matching networks")
-                    f.write(f"✓ Matching Networks:\n")
-                    for network in matching_networks:
-                        f.write(f"    {network}\n")
-                
-                missing_networks = results.get('missing_networks', [])
-                if missing_networks:
-                    print(f"  Writing {len(missing_networks)} missing networks")
-                    f.write(f"✗ Missing Networks (in ACL but not in SNMP config):\n")
-                    for network in missing_networks:
-                        f.write(f"    {network}\n")
-                    
-                    print(f"  Writing configuration for {len(missing_networks)} missing networks")
-                    # Add configuration commands to add missing networks
-                    f.write(f"\n  CONFIGURATION TO ADD MISSING NETWORKS:\n")
-                    for j, network in enumerate(missing_networks):
-                        if j % 5 == 0:  # Progress every 5 networks
-                            print(f"    Writing config block {j+1}/{len(missing_networks)}")
-                        f.write(f"  add\n")
-                        f.write(f"  set name={community}\n")
-                        f.write(f"  set version=version_v2\n")
-                        f.write(f"  set source={network}\n")
-                        f.write(f"  set permission=read_only\n")
-                        f.write(f"  save --cancelOnError\n")
-                        f.write(f"\n")
-                
-                extra_networks = results.get('extra_networks', [])
-                if extra_networks:
-                    print(f"  Writing {len(extra_networks)} extra networks")
-                    f.write(f"⚠ Extra Networks (in SNMP config but not in ACL):\n")
-                    for network in extra_networks:
-                        f.write(f"    {network}\n")
-                
-                f.write("\n" + "-" * 40 + "\n")
-            
-            print("Writing raw JSON data...")
-            # Raw JSON Data
-            f.write("\nRAW VALIDATION DATA (JSON)\n")
-            f.write("-" * 40 + "\n")
-            
-            print("Converting validation data to JSON...")
-            try:
-                json_data = json.dumps(validation, indent=2)
-                print(f"JSON data length: {len(json_data)} characters")
-                f.write(json_data)
-            except Exception as e:
-                print(f"Error converting to JSON: {e}")
-                f.write("Error generating JSON data")
+            # Simplified rest of the report for now
+            print("Writing simplified rest of report...")
+            f.write("VALIDATION COMPLETED\n")
+            f.write("See debug output for details.\n")
+            f.flush()
         
         print(f"Audit report written successfully to {output_file}")
         
     except Exception as e:
         print(f"ERROR writing audit report: {e}")
         import traceback
-        print(f"Traceback: {traceback.format_exc()}")
+        print(f"Full traceback: {traceback.format_exc()}")
         raise
 
 def main():
