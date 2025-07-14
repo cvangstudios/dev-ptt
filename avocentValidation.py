@@ -53,7 +53,20 @@ class CiscoACLParser:
     def _parse_acl_line(self, line: str) -> Optional[str]:
         """Parse a single ACL line and extract network in CIDR format"""
         
-        # Standard numbered ACL: access-list 10 permit 192.168.1.0 0.0.0.255
+        # NX-OS format: permit ip 1.1.1.0/24 any
+        nxos_pattern = r'permit\s+ip\s+(\d+\.\d+\.\d+\.\d+/\d+)\s+'
+        match = re.search(nxos_pattern, line, re.IGNORECASE)
+        if match:
+            return match.group(1)
+        
+        # NX-OS host format: permit ip host 192.168.1.100 any
+        nxos_host_pattern = r'permit\s+ip\s+host\s+(\d+\.\d+\.\d+\.\d+)\s+'
+        match = re.search(nxos_host_pattern, line, re.IGNORECASE)
+        if match:
+            host = match.group(1)
+            return f"{host}/32"
+        
+        # IOS Standard numbered ACL: access-list 10 permit 192.168.1.0 0.0.0.255
         std_pattern = r'access-list\s+\d+\s+permit\s+(\d+\.\d+\.\d+\.\d+)\s+(\d+\.\d+\.\d+\.\d+)'
         match = re.search(std_pattern, line, re.IGNORECASE)
         if match:
@@ -61,14 +74,14 @@ class CiscoACLParser:
             wildcard = match.group(2)
             return self._wildcard_to_cidr(network, wildcard)
         
-        # Standard numbered ACL host: access-list 10 permit host 192.168.1.100
+        # IOS Standard numbered ACL host: access-list 10 permit host 192.168.1.100
         host_pattern = r'access-list\s+\d+\s+permit\s+host\s+(\d+\.\d+\.\d+\.\d+)'
         match = re.search(host_pattern, line, re.IGNORECASE)
         if match:
             host = match.group(1)
             return f"{host}/32"
         
-        # Extended ACL: access-list 100 permit ip 192.168.1.0 0.0.0.255 any
+        # IOS Extended ACL: access-list 100 permit ip 192.168.1.0 0.0.0.255 any
         ext_pattern = r'access-list\s+\d+\s+permit\s+ip\s+(\d+\.\d+\.\d+\.\d+)\s+(\d+\.\d+\.\d+\.\d+)\s+'
         match = re.search(ext_pattern, line, re.IGNORECASE)
         if match:
@@ -76,14 +89,14 @@ class CiscoACLParser:
             wildcard = match.group(2)
             return self._wildcard_to_cidr(network, wildcard)
         
-        # Extended ACL host: access-list 100 permit ip host 192.168.1.100 any
+        # IOS Extended ACL host: access-list 100 permit ip host 192.168.1.100 any
         ext_host_pattern = r'access-list\s+\d+\s+permit\s+ip\s+host\s+(\d+\.\d+\.\d+\.\d+)\s+'
         match = re.search(ext_host_pattern, line, re.IGNORECASE)
         if match:
             host = match.group(1)
             return f"{host}/32"
         
-        # Named ACL: permit 192.168.1.0 0.0.0.255
+        # IOS Named ACL: permit 192.168.1.0 0.0.0.255
         named_pattern = r'^\s*permit\s+(\d+\.\d+\.\d+\.\d+)\s+(\d+\.\d+\.\d+\.\d+)'
         match = re.search(named_pattern, line, re.IGNORECASE)
         if match:
@@ -91,7 +104,7 @@ class CiscoACLParser:
             wildcard = match.group(2)
             return self._wildcard_to_cidr(network, wildcard)
         
-        # Named ACL host: permit host 192.168.1.100
+        # IOS Named ACL host: permit host 192.168.1.100
         named_host_pattern = r'^\s*permit\s+host\s+(\d+\.\d+\.\d+\.\d+)'
         match = re.search(named_host_pattern, line, re.IGNORECASE)
         if match:
