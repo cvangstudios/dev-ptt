@@ -629,15 +629,33 @@ def write_audit_report(output_file: str, source_file: str, hostname: str,
             f.write("=" * 80 + "\n")
             f.write(f"Source File: {source_file}\n")
             f.write(f"Hostname: {hostname}\n")
-            f.write(f"Audit Date: {os.popen('date').read().strip()}\n")
+            
+            print("Getting current timestamp...")
+            try:
+                import datetime
+                current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                f.write(f"Audit Date: {current_time}\n")
+            except Exception as e:
+                print(f"Warning: Could not get timestamp: {e}")
+                f.write(f"Audit Date: Unknown\n")
+            
+            print("Finishing header...")
             f.write("=" * 80 + "\n\n")
             
             print("Writing SNMP configuration...")
             # SNMP Configuration Summary
             f.write("SNMP CONFIGURATION BY COMMUNITY\n")
             f.write("-" * 40 + "\n")
-            f.write(validator.get_yaml())
-            f.write("\n")
+            
+            print("Getting YAML from validator...")
+            try:
+                yaml_content = validator.get_yaml()
+                print(f"YAML content length: {len(yaml_content)} characters")
+                f.write(yaml_content)
+                f.write("\n")
+            except Exception as e:
+                print(f"Error getting YAML: {e}")
+                f.write("Error generating YAML content\n\n")
             
             print("Writing overall summary...")
             # Overall Summary
@@ -653,7 +671,11 @@ def write_audit_report(output_file: str, source_file: str, hostname: str,
             # ACL Networks
             f.write("ACL INTENT NETWORKS\n")
             f.write("-" * 40 + "\n")
-            for network in validation['acl_networks']:
+            acl_networks = validation.get('acl_networks', [])
+            print(f"Found {len(acl_networks)} ACL networks to write")
+            for i, network in enumerate(acl_networks):
+                if i % 10 == 0:  # Progress indicator every 10 networks
+                    print(f"  Writing ACL network {i+1}/{len(acl_networks)}")
                 f.write(f"  {network}\n")
             f.write("\n")
             
@@ -662,8 +684,11 @@ def write_audit_report(output_file: str, source_file: str, hostname: str,
             f.write("DETAILED VALIDATION BY COMMUNITY\n")
             f.write("-" * 40 + "\n")
             
-            community_count = len(validation['validation_by_community'])
-            for i, (community, results) in enumerate(validation['validation_by_community'].items(), 1):
+            community_results = validation.get('validation_by_community', {})
+            community_count = len(community_results)
+            print(f"Processing {community_count} communities...")
+            
+            for i, (community, results) in enumerate(community_results.items(), 1):
                 print(f"Processing community {i}/{community_count}: {community}")
                 
                 f.write(f"\nCommunity: {community}\n")
@@ -671,19 +696,26 @@ def write_audit_report(output_file: str, source_file: str, hostname: str,
                 f.write(f"Networks Matched: {results['summary']['matching_count']}/{results['summary']['total_acl_networks']}\n")
                 f.write(f"Compliance Percentage: {results['summary']['compliance_percentage']}%\n")
                 
-                if results['matching_networks']:
+                matching_networks = results.get('matching_networks', [])
+                if matching_networks:
+                    print(f"  Writing {len(matching_networks)} matching networks")
                     f.write(f"✓ Matching Networks:\n")
-                    for network in results['matching_networks']:
+                    for network in matching_networks:
                         f.write(f"    {network}\n")
                 
-                if results['missing_networks']:
+                missing_networks = results.get('missing_networks', [])
+                if missing_networks:
+                    print(f"  Writing {len(missing_networks)} missing networks")
                     f.write(f"✗ Missing Networks (in ACL but not in SNMP config):\n")
-                    for network in results['missing_networks']:
+                    for network in missing_networks:
                         f.write(f"    {network}\n")
                     
+                    print(f"  Writing configuration for {len(missing_networks)} missing networks")
                     # Add configuration commands to add missing networks
                     f.write(f"\n  CONFIGURATION TO ADD MISSING NETWORKS:\n")
-                    for network in results['missing_networks']:
+                    for j, network in enumerate(missing_networks):
+                        if j % 5 == 0:  # Progress every 5 networks
+                            print(f"    Writing config block {j+1}/{len(missing_networks)}")
                         f.write(f"  add\n")
                         f.write(f"  set name={community}\n")
                         f.write(f"  set version=version_v2\n")
@@ -692,9 +724,11 @@ def write_audit_report(output_file: str, source_file: str, hostname: str,
                         f.write(f"  save --cancelOnError\n")
                         f.write(f"\n")
                 
-                if results['extra_networks']:
+                extra_networks = results.get('extra_networks', [])
+                if extra_networks:
+                    print(f"  Writing {len(extra_networks)} extra networks")
                     f.write(f"⚠ Extra Networks (in SNMP config but not in ACL):\n")
-                    for network in results['extra_networks']:
+                    for network in extra_networks:
                         f.write(f"    {network}\n")
                 
                 f.write("\n" + "-" * 40 + "\n")
@@ -703,12 +737,22 @@ def write_audit_report(output_file: str, source_file: str, hostname: str,
             # Raw JSON Data
             f.write("\nRAW VALIDATION DATA (JSON)\n")
             f.write("-" * 40 + "\n")
-            f.write(json.dumps(validation, indent=2))
+            
+            print("Converting validation data to JSON...")
+            try:
+                json_data = json.dumps(validation, indent=2)
+                print(f"JSON data length: {len(json_data)} characters")
+                f.write(json_data)
+            except Exception as e:
+                print(f"Error converting to JSON: {e}")
+                f.write("Error generating JSON data")
         
         print(f"Audit report written successfully to {output_file}")
         
     except Exception as e:
         print(f"ERROR writing audit report: {e}")
+        import traceback
+        print(f"Traceback: {traceback.format_exc()}")
         raise
 
 def main():
