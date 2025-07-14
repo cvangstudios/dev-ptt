@@ -624,7 +624,7 @@ def process_uot_files(folder_path: str = ".") -> None:
                 print("=" * 60)
                 
                 # Save missing config to file
-                with open(config_file_path, 'w') as config_f:
+                with open(config_file_path, 'w', encoding='utf-8') as config_f:
                     config_f.write(f"# Missing SNMP Configuration for {hostname}\n")
                     config_f.write(f"# Generated from audit\n\n")
                     config_f.write("cd /network/snmp/\n")
@@ -632,9 +632,9 @@ def process_uot_files(folder_path: str = ".") -> None:
                 
                 print(f"Missing configuration saved to: {config_file_path}")
             else:
-                print(f"✓ No missing configuration needed for {hostname}")
+                print(f"[PASS] No missing configuration needed for {hostname}")
             
-            print(f"✓ Avocent audit complete for {hostname}")
+            print(f"[PASS] Avocent audit complete for {hostname}")
             print("=" * 60)
             
         except Exception as e:
@@ -683,7 +683,7 @@ def write_audit_report(output_file: str, source_file: str, hostname: str,
         return
     
     try:
-        with open(output_file, 'w') as f:
+        with open(output_file, 'w', encoding='utf-8') as f:
             print("File opened successfully")
             
             print("Writing basic header line 1...")
@@ -793,14 +793,14 @@ def write_audit_report(output_file: str, source_file: str, hostname: str,
                 matching_networks = results.get('matching_networks', [])
                 if matching_networks:
                     print(f"  Writing {len(matching_networks)} matching networks")
-                    f.write(f"✓ Matching Networks:\n")
+                    f.write(f"[PASS] Matching Networks:\n")
                     for network in matching_networks:
                         f.write(f"    {network}\n")
                 
                 missing_networks = results.get('missing_networks', [])
                 if missing_networks:
                     print(f"  Found {len(missing_networks)} missing networks for community {community}")
-                    f.write(f"✗ Missing Networks (in ACL but not in SNMP config):\n")
+                    f.write(f"[FAIL] Missing Networks (in ACL but not in SNMP config):\n")
                     for network in missing_networks:
                         f.write(f"    {network}\n")
                     
@@ -823,7 +823,7 @@ def write_audit_report(output_file: str, source_file: str, hostname: str,
                 extra_networks = results.get('extra_networks', [])
                 if extra_networks:
                     print(f"  Writing {len(extra_networks)} extra networks")
-                    f.write(f"⚠ Extra Networks (in SNMP config but not in ACL):\n")
+                    f.write(f"[WARN] Extra Networks (in SNMP config but not in ACL):\n")
                     for network in extra_networks:
                         f.write(f"    {network}\n")
                 
