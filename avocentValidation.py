@@ -878,3 +878,315 @@ access-list 80 permit 10.1.100.0 0.0.0.255"""
 
 if __name__ == "__main__":
     main()
+
+
+README
+==============
+# Cyclades SNMP Configuration Audit Script
+
+## Overview
+This Python script automates the auditing of Avocent/Vertiv Cyclades console server SNMP configurations against Cisco access-list intent data. It validates that all networks permitted in a Cisco ACL have corresponding SNMP community entries configured on the Cyclades devices.
+
+## Features
+- **Multi-device processing**: Automatically processes all `.log` files containing "uot" in the filename
+- **ACL intent validation**: Uses Cisco access-lists as the source of truth for intended SNMP access
+- **Hostname extraction**: Automatically extracts device hostnames from configuration files
+- **Compliance reporting**: Generates detailed audit reports with pass/fail status
+- **Configuration generation**: Automatically generates missing SNMP configuration commands
+- **Multiple ACL format support**: Handles various Cisco ACL formats (NX-OS, IOS, Named ACLs)
+
+## Prerequisites
+- Python 3.6 or higher
+- Required Python modules: `json`, `yaml`, `re`, `ipaddress`, `os`, `collections`, `datetime`
+
+## File Structure Requirements
+```
+working_directory/
+├── script.py                    # The audit script
+├── acl-80.txt                  # Cisco ACL file (intent data)
+├── device1-uot-config.log      # Cyclades config files (containing "uot")
+├── device2-uot-config.log      # Additional device configs
+└── avocent_audit/              # Output folder (created automatically)
+    ├── config-audit-hostname1.txt
+    ├── missing-config-hostname1.txt
+    └── ...
+```
+
+## Usage
+
+### Command Line
+```bash
+# Process files in current directory
+python script.py
+
+# Process files in specific directory
+python script.py /path/to/config/files
+```
+
+### Input Files
+
+#### 1. ACL File (`acl-80.txt`)
+**Required**: Must be present in the same directory as the device configuration files.
+
+**Supported ACL Formats**:
+
+**NX-OS Format (CIDR notation)**:
+```
+ip access-list 80
+permit ip 10.1.1.0/24 any
+permit ip 10.1.2.0/27 any
+permit ip host 192.168.1.100 any
+```
+
+**IOS Standard ACL (wildcard masks)**:
+```
+access-list 10 permit 10.1.1.0 0.0.0.255
+access-list 10 permit host 192.168.1.100
+```
+
+**IOS Extended ACL**:
+```
+access-list 100 permit ip 10.1.1.0 0.0.0.255 any
+access-list 100 permit ip host 192.168.1.100 any
+```
+
+**IOS Named ACL**:
+```
+ip access-list standard SNMP_HOSTS
+permit 10.1.1.0 0.0.0.255
+permit host 192.168.1.100
+```
+
+#### 2. Cyclades Configuration Files
+**Naming Convention**: Files must have `.log` extension and contain "uot" in the filename.
+**Examples**: `device1-uot-backup.log`, `console-uot-config.log`
+
+**Required Sections in Config File**:
+
+1. **Hostname Section**:
+```
+cd /network/settings
+set hostname=device-name-here
+```
+
+2. **SNMP Section** (delimited by):
+```
+cd /network/snmp/
+delete -
+add
+set name=community_string
+set version=version_v2
+set source=10.1.1.0/24
+set permission=read_only
+save --cancelOnError
+# ... more add blocks ...
+cd /network/dhcp_server/settings
+```
+
+### Supported SNMP Configuration Parameters
+- **name**: Community string (groups all entries by this value)
+- **version**: `version_v1` or `version_v2`
+- **source**: Network in CIDR notation (e.g., `10.1.1.0/24`, `192.168.1.100/32`)
+- **permission**: `read_only` or `read_write`
+- **oid**: Optional OID restriction
+
+## Output Files
+
+### 1. Audit Reports (`config-audit-{hostname}.txt`)
+Comprehensive audit report containing:
+- Source file information
+- SNMP configuration by community (YAML format)
+- Overall compliance summary
+- ACL intent networks list
+- Detailed validation by community
+- Missing networks with configuration commands
+- Extra networks not in ACL
+- Raw validation data (JSON)
+
+### 2. Missing Configuration Files (`missing-config-{hostname}.txt`)
+Ready-to-use Cyclades configuration commands for missing networks:
+```
+# Missing SNMP Configuration for hostname
+# Generated from audit
+
+cd /network/snmp/
+# Missing networks for community: cisco
+add
+set name=cisco
+set version=version_v2
+set source=10.1.5.0/24
+set permission=read_only
+save --cancelOnError
+```
+
+## Script Workflow
+
+1. **File Discovery**
+   - Scans directory for `.log` files containing "uot"
+   - Verifies `acl-80.txt` exists
+
+2. **Configuration Parsing**
+   - Extracts hostname from `/network/settings` section
+   - Parses SNMP configuration from `/network/snmp/` section
+   - Groups SNMP entries by community string
+
+3. **ACL Processing**
+   - Parses Cisco ACL file
+   - Converts wildcard masks to CIDR notation (if needed)
+   - Creates list of intended networks
+
+4. **Validation**
+   - Compares ACL networks against SNMP configured sources
+   - Identifies missing, extra, and matching networks
+   - Calculates compliance percentages
+
+5. **Report Generation**
+   - Creates detailed audit reports
+   - Generates missing configuration commands
+   - Outputs results to terminal and files
+
+## Compliance Logic
+
+### Pass Criteria
+A device is **COMPLIANT** when:
+- Every network in the ACL has a corresponding SNMP entry with that network in the `source` field
+- All ACL networks are covered (100% coverage)
+
+### Fail Criteria
+A device is **NON-COMPLIANT** when:
+- One or more ACL networks are missing from SNMP configuration
+- Compliance percentage < 100%
+
+### Reporting Categories
+- **Matching Networks**: Networks present in both ACL and SNMP config
+- **Missing Networks**: Networks in ACL but not in SNMP config (compliance failure)
+- **Extra Networks**: Networks in SNMP config but not in ACL (informational)
+
+## Terminal Output Example
+
+```
+Found 2 files to process: device1-uot.log, device2-uot.log
+
+=== Processing device1-uot.log ===
+Extracted hostname: device1-console
+=== Starting ACL validation phase ===
+Reading ACL file: acl-80.txt
+Starting ACL parsing...
+Found 70 lines in ACL file
+ACL parsing complete. Found 65 unique networks
+=== Checking ACL entries ===
+Reading Cyclades configuration file: device1-uot.log
+SNMP section extracted: 5420 characters
+Parsing SNMP section: 5420 characters
+Found 1 communities with 59 sources
+=== Starting validation comparison ===
+Validating 1 communities against 65 ACL networks
+Processing community 1/1: 'cisco'
+Community 'cisco' is NON-COMPLIANT
+=== Validation comparison completed ===
+
+=== MISSING CONFIGURATION FOR device1-console ===
+# Missing networks for community: cisco
+add
+set name=cisco
+set version=version_v2
+set source=10.1.5.0/24
+set permission=read_only
+save --cancelOnError
+[... more config blocks ...]
+
+Missing configuration saved to: .\avocent_audit\missing-config-device1-console.txt
+FAIL - Avocent audit complete for device1-console - Compliance: FAIL
+```
+
+## Error Handling
+
+### Common Issues and Solutions
+
+1. **File Not Found Errors**
+   - Ensure `acl-80.txt` exists in the working directory
+   - Verify `.log` files have "uot" in the filename
+
+2. **Parsing Errors**
+   - Check that configuration files contain required sections
+   - Verify SNMP section is properly delimited
+
+3. **No Networks Found**
+   - Verify ACL format matches supported patterns
+   - Check for proper `permit` statements in ACL
+
+4. **Character Encoding Issues**
+   - Script uses UTF-8 encoding for all file operations
+   - Should handle international characters properly
+
+## Configuration Examples
+
+### Complete Working Example
+
+**acl-80.txt**:
+```
+ip access-list 80
+permit ip 10.1.1.0/24 any
+permit ip 10.1.2.0/24 any
+permit ip host 10.1.3.100 any
+```
+
+**device-uot-config.log** (relevant sections):
+```
+cd /network/settings
+set hostname=datacenter-console-01
+
+cd /network/snmp/
+delete -
+add
+set name=monitoring
+set version=version_v2
+set source=10.1.1.0/24
+set permission=read_only
+save --cancelOnError
+add
+set name=monitoring
+set version=version_v2
+set source=10.1.2.0/24
+set permission=read_only
+save --cancelOnError
+cd /network/dhcp_server/settings
+```
+
+**Expected Results**:
+- **Status**: NON-COMPLIANT (missing host 10.1.3.100/32)
+- **Missing config**: Generated for 10.1.3.100/32
+- **Compliance**: 66.67% (2 of 3 networks configured)
+
+## Customization Options
+
+### Modifying Default Values
+The script can be customized by editing these sections:
+
+1. **SNMP Version**: Change default version in missing config generation
+2. **Permission Level**: Modify default permission (read_only/read_write)
+3. **Progress Reporting**: Adjust frequency of progress messages
+4. **File Extensions**: Modify file discovery patterns
+
+### Adding New ACL Formats
+To support additional ACL formats, add new regex patterns to the `_parse_acl_line()` method in the `CiscoACLParser` class.
+
+## Troubleshooting
+
+### Debug Mode
+The script includes extensive debug output showing:
+- File processing progress
+- ACL parsing details
+- SNMP section extraction
+- Validation step-by-step progress
+
+### Validation Steps
+1. Verify file naming conventions
+2. Check ACL file format and syntax
+3. Ensure SNMP section delimiters are correct
+4. Validate hostname extraction section exists
+
+## License and Support
+This script is provided as-is for network infrastructure auditing purposes. Modify and distribute according to your organization's requirements.
+
+For issues or enhancements, review the debug output to identify specific failure points in the parsing or validation process.
