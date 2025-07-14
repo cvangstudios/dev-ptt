@@ -154,23 +154,39 @@ class CycladesConfigParser:
         start_match = re.search(start_pattern, config_text, re.IGNORECASE)
         
         if not start_match:
+            print("Warning: Start delimiter 'cd /network/snmp/' not found")
             return ""
         
-        start_pos = start_match.start()
+        start_pos = start_match.end()  # Start after the cd command
         
-        # Find the end of the SNMP section (next 'cd' command or end of file)
-        remaining_text = config_text[start_pos:]
-        end_pattern = r'\ncd\s+/'
-        end_match = re.search(end_pattern, remaining_text)
+        # Look specifically for the end delimiter
+        end_pattern = r'cd\s+/network/dhcp_server/settings'
+        end_match = re.search(end_pattern, config_text[start_pos:], re.IGNORECASE)
         
         if end_match:
             end_pos = start_pos + end_match.start()
-            return config_text[start_pos:end_pos]
+            snmp_section = config_text[start_pos:end_pos]
+            print(f"SNMP section extracted: {len(snmp_section)} characters")
+            return snmp_section
         else:
-            return config_text[start_pos:]
+            print("Warning: End delimiter 'cd /network/dhcp_server/settings' not found")
+            # Fallback to next 'cd' command or end of file
+            fallback_pattern = r'\ncd\s+/'
+            fallback_match = re.search(fallback_pattern, config_text[start_pos:])
+            if fallback_match:
+                end_pos = start_pos + fallback_match.start()
+                snmp_section = config_text[start_pos:end_pos]
+                print(f"SNMP section extracted (fallback): {len(snmp_section)} characters")
+                return snmp_section
+            else:
+                snmp_section = config_text[start_pos:]
+                print(f"SNMP section extracted (to end): {len(snmp_section)} characters")
+                return snmp_section
     
     def _parse_snmp_section(self, snmp_text: str) -> Dict[str, Dict]:
         """Parse SNMP section and group by community string"""
+        
+        print(f"Parsing SNMP section: {len(snmp_text)} characters")
         
         communities = defaultdict(lambda: {
             'sources': [],
@@ -179,21 +195,33 @@ class CycladesConfigParser:
             'oid': None
         })
         
-        # Split into blocks by 'add' statements
-        blocks = re.split(r'\nadd\s*\n', snmp_text)
+        # Clean up the text and split into blocks by 'add' statements
+        # Remove the initial cd command if present
+        clean_text = re.sub(r'^cd\s+/network/snmp/?.*?\n', '', snmp_text, flags=re.IGNORECASE)
         
-        for block in blocks:
-            if not block.strip():
+        # Split by 'add' keywords, but keep the 'add' in each block
+        blocks = re.split(r'\n(?=add\b)', clean_text, flags=re.IGNORECASE)
+        
+        print(f"Found {len(blocks)} potential blocks")
+        
+        for i, block in enumerate(blocks):
+            block = block.strip()
+            if not block or len(block) < 10:  # Skip very short blocks
                 continue
                 
-            # Skip the header block (contains cd /network/snmp, delete -)
-            if 'cd /network/snmp' in block or 'delete -' in block:
+            print(f"Processing block {i+1}: {block[:100]}...")
+            
+            # Skip blocks that don't contain 'add' (like delete statements)
+            if not re.search(r'\badd\b', block, re.IGNORECASE):
+                print(f"  Skipping block {i+1} - no 'add' found")
                 continue
             
             entry = self._parse_block(block)
             if entry:
                 community = entry['name']
                 communities[community]['sources'].append(entry['source'])
+                
+                print(f"  Added entry: {community} -> {entry['source']}")
                 
                 # Store other attributes (they should be consistent within a community)
                 if communities[community]['version'] is None:
@@ -202,17 +230,23 @@ class CycladesConfigParser:
                     communities[community]['permission'] = entry['permission']
                 if entry.get('oid') and communities[community]['oid'] is None:
                     communities[community]['oid'] = entry['oid']
+            else:
+                print(f"  Failed to parse block {i+1}")
         
         # Convert defaultdict to regular dict and sort sources
         result = {}
         for community, data in communities.items():
             result[community] = {
-                'sources': sorted(data['sources']),
+                'sources': sorted(list(set(data['sources']))),  # Remove duplicates and sort
                 'version': data['version'],
                 'permission': data['permission']
             }
             if data['oid']:
                 result[community]['oid'] = data['oid']
+        
+        print(f"Final result: {len(result)} communities found")
+        for community, data in result.items():
+            print(f"  {community}: {len(data['sources'])} sources")
         
         self.snmp_communities = result
         return result
