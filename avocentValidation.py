@@ -680,8 +680,8 @@ def write_audit_report(output_file: str, source_file: str, hostname: str,
             
             print("Getting YAML from validator...")
             try:
-                print("Calling validator.get_yaml()...")
-                yaml_content = validator.get_yaml()
+                print("Calling validator.get_snmp_yaml()...")
+                yaml_content = validator.get_snmp_yaml()
                 print(f"YAML content received, length: {len(yaml_content)} characters")
                 print(f"First 100 chars of YAML: {yaml_content[:100]}")
                 f.write(yaml_content)
