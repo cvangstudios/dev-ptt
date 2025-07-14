@@ -33,22 +33,32 @@ class CiscoACLParser:
     
     def parse_acl(self, acl_text: str) -> List[str]:
         """Parse Cisco ACL and extract permitted networks in CIDR format"""
+        print("Starting ACL parsing...")
         self.permitted_networks = set()
         
         # Split into lines and process each
         lines = acl_text.strip().split('\n')
+        print(f"Found {len(lines)} lines in ACL file")
         
-        for line in lines:
+        for i, line in enumerate(lines):
             line = line.strip()
             if not line or line.startswith('!'):
+                print(f"Line {i+1}: Skipping comment/empty line")
                 continue
+            
+            print(f"Line {i+1}: Processing '{line[:50]}{'...' if len(line) > 50 else ''}'")
             
             # Parse different ACL formats
             network = self._parse_acl_line(line)
             if network:
                 self.permitted_networks.add(network)
+                print(f"Line {i+1}: Extracted network '{network}'")
+            else:
+                print(f"Line {i+1}: No network found")
         
-        return sorted(list(self.permitted_networks))
+        result = sorted(list(self.permitted_networks))
+        print(f"ACL parsing complete. Found {len(result)} unique networks: {result}")
+        return result
     
     def _parse_acl_line(self, line: str) -> Optional[str]:
         """Parse a single ACL line and extract network in CIDR format"""
@@ -340,18 +350,42 @@ class SNMPACLValidator:
                            expected_community: str = None) -> Dict[str, Any]:
         """Validate SNMP configuration against ACL using files"""
         
+        print("=== Starting ACL validation phase ===")
+        
         # Parse ACL file
-        acl_networks = set(self.acl_parser.parse_acl_file(acl_file))
+        print(f"Reading ACL file: {acl_file}")
+        try:
+            acl_networks = set(self.acl_parser.parse_acl_file(acl_file))
+            print(f"ACL parsing completed successfully. Found {len(acl_networks)} networks.")
+        except Exception as e:
+            print(f"ERROR: ACL parsing failed: {e}")
+            return {}
+        
+        print("=== Checking ACL entries ===")
+        for i, network in enumerate(sorted(acl_networks)):
+            print(f"ACL entry {i+1}: {network}")
         
         # Parse Cyclades configuration
-        snmp_communities = self.config_parser.parse_config_file(config_file)
+        print(f"Reading Cyclades configuration file: {config_file}")
+        try:
+            snmp_communities = self.config_parser.parse_config_file(config_file)
+            print(f"Cyclades config parsing completed. Found {len(snmp_communities)} communities.")
+        except Exception as e:
+            print(f"ERROR: Cyclades config parsing failed: {e}")
+            return {}
         
-        return self._validate_communities(acl_networks, snmp_communities, expected_community)
+        print("=== Starting validation comparison ===")
+        result = self._validate_communities(acl_networks, snmp_communities, expected_community)
+        print("=== Validation comparison completed ===")
+        
+        return result
     
     def _validate_communities(self, acl_networks: Set[str], 
                              snmp_communities: Dict[str, Dict],
                              expected_community: str = None) -> Dict[str, Any]:
         """Validate ACL networks against SNMP communities"""
+        
+        print("=== Starting community validation ===")
         
         validation_results = {
             'acl_networks': sorted(list(acl_networks)),
@@ -363,17 +397,30 @@ class SNMPACLValidator:
         total_communities = len(snmp_communities)
         compliant_communities = 0
         
+        print(f"Validating {total_communities} communities against {len(acl_networks)} ACL networks")
+        
         # Validate each community
-        for community, community_data in snmp_communities.items():
-            configured_networks = set(community_data['sources'])
+        for community_num, (community, community_data) in enumerate(snmp_communities.items(), 1):
+            print(f"=== Processing community {community_num}/{total_communities}: '{community}' ===")
             
+            configured_networks = set(community_data['sources'])
+            print(f"Community '{community}' has {len(configured_networks)} configured sources")
+            
+            print("Comparing ACL networks against community sources...")
             missing_networks = acl_networks - configured_networks
             extra_networks = configured_networks - acl_networks
             matching_networks = acl_networks & configured_networks
             
+            print(f"  Matching networks: {len(matching_networks)}")
+            print(f"  Missing networks: {len(missing_networks)}")
+            print(f"  Extra networks: {len(extra_networks)}")
+            
             is_compliant = len(missing_networks) == 0
             if is_compliant:
                 compliant_communities += 1
+                print(f"  Community '{community}' is COMPLIANT")
+            else:
+                print(f"  Community '{community}' is NON-COMPLIANT")
             
             compliance_percentage = (len(matching_networks) / len(acl_networks) * 100) if acl_networks else 0
             
@@ -393,6 +440,7 @@ class SNMPACLValidator:
                 }
             }
         
+        print("=== Generating overall summary ===")
         # Overall summary
         validation_results['overall_summary'] = {
             'total_communities': total_communities,
@@ -400,6 +448,9 @@ class SNMPACLValidator:
             'overall_compliance': compliant_communities == total_communities,
             'community_compliance_rate': round((compliant_communities / total_communities * 100), 2) if total_communities > 0 else 0
         }
+        
+        print(f"Overall compliance: {compliant_communities}/{total_communities} communities compliant")
+        print("=== Community validation completed ===")
         
         return validation_results
     
@@ -553,9 +604,11 @@ def process_uot_files(folder_path: str = ".") -> None:
             output_file = os.path.join(folder_path, f"config-audit-{hostname}.txt")
             
             # Write results to output file
+            print(f"Writing audit report to: {output_file}")
             write_audit_report(output_file, log_file, hostname, validation, validator)
             
-            print(f"✓ Audit complete - results written to {output_file}")
+            print(f"✓ Avocent audit complete for {hostname} - results written to {output_file}")
+            print("=" * 60)
             
         except Exception as e:
             print(f"✗ Error processing {log_file}: {e}")
@@ -564,6 +617,8 @@ def process_uot_files(folder_path: str = ".") -> None:
 def write_audit_report(output_file: str, source_file: str, hostname: str, 
                       validation: Dict, validator: SNMPACLValidator) -> None:
     """Write detailed audit report to file"""
+    
+    print(f"Generating audit report for {hostname}...")
     
     with open(output_file, 'w') as f:
         f.write("=" * 80 + "\n")
@@ -627,6 +682,8 @@ def write_audit_report(output_file: str, source_file: str, hostname: str,
         f.write("\nRAW VALIDATION DATA (JSON)\n")
         f.write("-" * 40 + "\n")
         f.write(json.dumps(validation, indent=2))
+    
+    print(f"Audit report written successfully to {output_file}")
 
 def main():
     """Main execution function"""
