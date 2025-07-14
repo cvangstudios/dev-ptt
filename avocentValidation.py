@@ -632,9 +632,9 @@ def process_uot_files(folder_path: str = ".") -> None:
                 
                 print(f"Missing configuration saved to: {config_file_path}")
             else:
-                print(f"[PASS] No missing configuration needed for {hostname}")
+                print(f"PASS - No missing configuration needed for {hostname}")
             
-            print(f"[PASS] Avocent audit complete for {hostname}")
+            print(f"PASS - Avocent audit complete for {hostname}")
             print("=" * 60)
             
         except Exception as e:
