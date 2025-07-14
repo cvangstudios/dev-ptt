@@ -217,6 +217,38 @@ class CycladesConfigParser:
         self.snmp_communities = result
         return result
     
+    def extract_hostname(self, config_text: str) -> str:
+        """Extract hostname from /network/settings section"""
+        
+        # Find the /network/settings section
+        settings_pattern = r'cd\s+/network/settings'
+        settings_match = re.search(settings_pattern, config_text, re.IGNORECASE)
+        
+        if not settings_match:
+            return "unknown-hostname"
+        
+        start_pos = settings_match.start()
+        
+        # Find the end of the settings section (next 'cd' command or end of file)
+        remaining_text = config_text[start_pos:]
+        end_pattern = r'\ncd\s+/'
+        end_match = re.search(end_pattern, remaining_text)
+        
+        if end_match:
+            end_pos = start_pos + end_match.start()
+            settings_section = config_text[start_pos:end_pos]
+        else:
+            settings_section = config_text[start_pos:]
+        
+        # Extract hostname
+        hostname_pattern = r'set\s+hostname\s*=\s*([^\s\n]+)'
+        hostname_match = re.search(hostname_pattern, settings_section, re.IGNORECASE)
+        
+        if hostname_match:
+            return hostname_match.group(1).strip()
+        
+        return "unknown-hostname"
+    
     def _parse_block(self, block: str) -> Optional[Dict[str, str]]:
         """Parse a single add block"""
         entry_data = {}
@@ -364,6 +396,70 @@ class SNMPACLValidator:
         
         return "unknown-hostname"
 
+    def extract_hostname(self, config_text: str) -> str:
+        """Extract hostname from /network/settings section"""
+        
+        # Find the /network/settings section
+        settings_pattern = r'cd\s+/network/settings'
+        settings_match = re.search(settings_pattern, config_text, re.IGNORECASE)
+        
+        if not settings_match:
+            return "unknown-hostname"
+        
+        start_pos = settings_match.start()
+        
+        # Find the end of the settings section (next 'cd' command or end of file)
+        remaining_text = config_text[start_pos:]
+        end_pattern = r'\ncd\s+/'
+        end_match = re.search(end_pattern, remaining_text)
+        
+        if end_match:
+            end_pos = start_pos + end_match.start()
+            settings_section = config_text[start_pos:end_pos]
+        else:
+            settings_section = config_text[start_pos:]
+        
+        # Extract hostname
+        hostname_pattern = r'set\s+hostname\s*=\s*([^\s\n]+)'
+        hostname_match = re.search(hostname_pattern, settings_section, re.IGNORECASE)
+        
+        if hostname_match:
+            return hostname_match.group(1).strip()
+        
+        return "unknown-hostname"
+
+def extract_hostname_from_config(config_text: str) -> str:
+    """Extract hostname from /network/settings section"""
+    
+    # Find the /network/settings section
+    settings_pattern = r'cd\s+/network/settings'
+    settings_match = re.search(settings_pattern, config_text, re.IGNORECASE)
+    
+    if not settings_match:
+        return "unknown-hostname"
+    
+    start_pos = settings_match.start()
+    
+    # Find the end of the settings section (next 'cd' command or end of file)
+    remaining_text = config_text[start_pos:]
+    end_pattern = r'\ncd\s+/'
+    end_match = re.search(end_pattern, remaining_text)
+    
+    if end_match:
+        end_pos = start_pos + end_match.start()
+        settings_section = config_text[start_pos:end_pos]
+    else:
+        settings_section = config_text[start_pos:]
+    
+    # Extract hostname
+    hostname_pattern = r'set\s+hostname\s*=\s*([^\s\n]+)'
+    hostname_match = re.search(hostname_pattern, settings_section, re.IGNORECASE)
+    
+    if hostname_match:
+        return hostname_match.group(1).strip()
+    
+    return "unknown-hostname"
+
 def process_uot_files(folder_path: str = ".") -> None:
     """Process all .log files containing 'uot' in their name"""
     
@@ -400,7 +496,7 @@ def process_uot_files(folder_path: str = ".") -> None:
                 config_text = f.read()
             
             # Extract hostname
-            hostname = validator.config_parser.extract_hostname(config_text)
+            hostname = extract_hostname_from_config(config_text)
             print(f"Extracted hostname: {hostname}")
             
             # Validate configuration
