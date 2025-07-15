@@ -903,11 +903,22 @@ def write_audit_report(output_file: str, source_file: str, hostname: str,
                 f.write("\n" + "-" * 40 + "\n")
                 f.flush()
             
-            # Simplified rest of the report for now
-            print("Writing simplified rest of report...")
-            f.write("VALIDATION COMPLETED\n")
-            f.write("See debug output for details.\n")
+            f.write("\n")
             f.flush()
+            
+            # Write raw JSON data at the end
+            print("Writing raw JSON data...")
+            f.write("\nRAW VALIDATION DATA (JSON)\n")
+            f.write("-" * 40 + "\n")
+            
+            print("Converting validation data to JSON...")
+            try:
+                json_data = json.dumps(validation, indent=2)
+                print(f"JSON data length: {len(json_data)} characters")
+                f.write(json_data)
+            except Exception as e:
+                print(f"Error converting to JSON: {e}")
+                f.write("Error generating JSON data")
         
         print(f"Audit report written successfully to {output_file}")
         
