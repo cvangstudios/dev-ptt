@@ -183,8 +183,9 @@ class CycladesConfigParser:
         start_pos = start_match.end()  # Start after the cd command
         
         # Look specifically for the end delimiter
-        # Try newer format first, then fall back to older format
+        # Try multiple patterns in order of preference
         end_patterns = [
+            r'commit',  # Short form configuration
             r'cd\s+/events_and_logs/sensors',  # Newer format
             r'cd\s+/network/dhcp_server/settings'  # Older format
         ]
