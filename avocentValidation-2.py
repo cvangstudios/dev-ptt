@@ -529,14 +529,18 @@ class SNMPACLValidator:
 def extract_hostname_from_config(config_text: str) -> str:
     """Extract hostname from /network/settings section"""
     
+    print("Attempting to extract hostname...")
+    
     # Find the /network/settings section
     settings_pattern = r'cd\s+/network/settings'
     settings_match = re.search(settings_pattern, config_text, re.IGNORECASE)
     
     if not settings_match:
+        print("Warning: 'cd /network/settings' section not found")
         return "unknown-hostname"
     
     start_pos = settings_match.start()
+    print(f"Found /network/settings section at position {start_pos}")
     
     # Find the end of the settings section (next 'cd' command or end of file)
     remaining_text = config_text[start_pos:]
@@ -546,16 +550,33 @@ def extract_hostname_from_config(config_text: str) -> str:
     if end_match:
         end_pos = start_pos + end_match.start()
         settings_section = config_text[start_pos:end_pos]
+        print(f"Settings section ends at position {end_pos}")
     else:
         settings_section = config_text[start_pos:]
+        print("Settings section extends to end of file")
     
-    # Extract hostname
-    hostname_pattern = r'set\s+hostname\s*=\s*([^\s\n]+)'
-    hostname_match = re.search(hostname_pattern, settings_section, re.IGNORECASE)
+    print(f"Settings section length: {len(settings_section)} characters")
+    print(f"First 200 chars of settings section: {settings_section[:200]}")
     
-    if hostname_match:
-        return hostname_match.group(1).strip()
+    # Extract hostname with multiple patterns
+    hostname_patterns = [
+        r'set\s+hostname\s*=\s*([^\s\n\r]+)',
+        r'hostname\s*=\s*([^\s\n\r]+)',
+        r'set\s*hostname\s*:\s*([^\s\n\r]+)',
+        r'hostname\s*:\s*([^\s\n\r]+)'
+    ]
     
+    for i, pattern in enumerate(hostname_patterns):
+        print(f"Trying hostname pattern {i+1}: {pattern}")
+        hostname_match = re.search(pattern, settings_section, re.IGNORECASE)
+        if hostname_match:
+            hostname = hostname_match.group(1).strip()
+            print(f"SUCCESS: Found hostname '{hostname}' with pattern {i+1}")
+            return hostname
+        else:
+            print(f"Pattern {i+1} did not match")
+    
+    print("ERROR: No hostname found with any pattern")
     return "unknown-hostname"
 
 def process_uot_files(folder_path: str = ".") -> None:
@@ -617,6 +638,15 @@ def process_uot_files(folder_path: str = ".") -> None:
             
             # Extract hostname
             hostname = extract_hostname_from_config(config_text)
+            
+            # Use filename as fallback if hostname extraction fails
+            if hostname == "unknown-hostname":
+                # Extract base filename without extension and path
+                fallback_hostname = os.path.splitext(os.path.basename(log_file))[0]
+                print(f"Using filename as hostname fallback: {fallback_hostname}")
+                hostname = fallback_hostname
+            
+            print(f"Final hostname for processing: {hostname}")
             print(f"Extracted hostname: {hostname}")
             
             # Validate configuration
