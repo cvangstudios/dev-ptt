@@ -1,0 +1,976 @@
+#!/usr/bin/env python3
+"""
+Cyclades SNMP Configuration Validator with ACL File
+Reads ACL from file and validates against Cyclades SNMP config grouped by community
+"""
+
+import json
+import yaml
+import re
+import ipaddress
+import os
+from typing import Dict, List, Any, Optional, Set
+from collections import defaultdict
+
+class CiscoACLParser:
+    """Parse Cisco access-list to extract permitted networks"""
+    
+    def __init__(self):
+        self.permitted_networks: Set[str] = set()
+    
+    def parse_acl_file(self, filename: str) -> List[str]:
+        """Read and parse Cisco ACL from file"""
+        try:
+            with open(filename, 'r') as f:
+                acl_text = f.read()
+            return self.parse_acl(acl_text)
+        except FileNotFoundError:
+            print(f"Error: ACL file '{filename}' not found")
+            return []
+        except Exception as e:
+            print(f"Error reading ACL file: {e}")
+            return []
+    
+    def parse_acl(self, acl_text: str) -> List[str]:
+        """Parse Cisco ACL and extract permitted networks in CIDR format"""
+        print("Starting ACL parsing...")
+        self.permitted_networks = set()
+        
+        # Split into lines and process each
+        lines = acl_text.strip().split('\n')
+        print(f"Found {len(lines)} lines in ACL file")
+        
+        for i, line in enumerate(lines):
+            line = line.strip()
+            if not line or line.startswith('!'):
+                print(f"Line {i+1}: Skipping comment/empty line")
+                continue
+            
+            print(f"Line {i+1}: Processing '{line[:50]}{'...' if len(line) > 50 else ''}'")
+            
+            # Parse different ACL formats
+            network = self._parse_acl_line(line)
+            if network:
+                self.permitted_networks.add(network)
+                print(f"Line {i+1}: Extracted network '{network}'")
+            else:
+                print(f"Line {i+1}: No network found")
+        
+        result = sorted(list(self.permitted_networks))
+        print(f"ACL parsing complete. Found {len(result)} unique networks: {result}")
+        return result
+    
+    def _parse_acl_line(self, line: str) -> Optional[str]:
+        """Parse a single ACL line and extract network in CIDR format"""
+        
+        # NX-OS format: permit ip 1.1.1.0/24 any
+        nxos_pattern = r'permit\s+ip\s+(\d+\.\d+\.\d+\.\d+/\d+)\s+'
+        match = re.search(nxos_pattern, line, re.IGNORECASE)
+        if match:
+            return match.group(1)
+        
+        # NX-OS host format: permit ip host 192.168.1.100 any
+        nxos_host_pattern = r'permit\s+ip\s+host\s+(\d+\.\d+\.\d+\.\d+)\s+'
+        match = re.search(nxos_host_pattern, line, re.IGNORECASE)
+        if match:
+            host = match.group(1)
+            return f"{host}/32"
+        
+        # IOS Standard numbered ACL: access-list 10 permit 192.168.1.0 0.0.0.255
+        std_pattern = r'access-list\s+\d+\s+permit\s+(\d+\.\d+\.\d+\.\d+)\s+(\d+\.\d+\.\d+\.\d+)'
+        match = re.search(std_pattern, line, re.IGNORECASE)
+        if match:
+            network = match.group(1)
+            wildcard = match.group(2)
+            return self._wildcard_to_cidr(network, wildcard)
+        
+        # IOS Standard numbered ACL host: access-list 10 permit host 192.168.1.100
+        host_pattern = r'access-list\s+\d+\s+permit\s+host\s+(\d+\.\d+\.\d+\.\d+)'
+        match = re.search(host_pattern, line, re.IGNORECASE)
+        if match:
+            host = match.group(1)
+            return f"{host}/32"
+        
+        # IOS Extended ACL: access-list 100 permit ip 192.168.1.0 0.0.0.255 any
+        ext_pattern = r'access-list\s+\d+\s+permit\s+ip\s+(\d+\.\d+\.\d+\.\d+)\s+(\d+\.\d+\.\d+\.\d+)\s+'
+        match = re.search(ext_pattern, line, re.IGNORECASE)
+        if match:
+            network = match.group(1)
+            wildcard = match.group(2)
+            return self._wildcard_to_cidr(network, wildcard)
+        
+        # IOS Extended ACL host: access-list 100 permit ip host 192.168.1.100 any
+        ext_host_pattern = r'access-list\s+\d+\s+permit\s+ip\s+host\s+(\d+\.\d+\.\d+\.\d+)\s+'
+        match = re.search(ext_host_pattern, line, re.IGNORECASE)
+        if match:
+            host = match.group(1)
+            return f"{host}/32"
+        
+        # IOS Named ACL: permit 192.168.1.0 0.0.0.255
+        named_pattern = r'^\s*permit\s+(\d+\.\d+\.\d+\.\d+)\s+(\d+\.\d+\.\d+\.\d+)'
+        match = re.search(named_pattern, line, re.IGNORECASE)
+        if match:
+            network = match.group(1)
+            wildcard = match.group(2)
+            return self._wildcard_to_cidr(network, wildcard)
+        
+        # IOS Named ACL host: permit host 192.168.1.100
+        named_host_pattern = r'^\s*permit\s+host\s+(\d+\.\d+\.\d+\.\d+)'
+        match = re.search(named_host_pattern, line, re.IGNORECASE)
+        if match:
+            host = match.group(1)
+            return f"{host}/32"
+        
+        return None
+    
+    def _wildcard_to_cidr(self, network: str, wildcard: str) -> str:
+        """Convert network and wildcard mask to CIDR notation"""
+        try:
+            # Convert wildcard mask to subnet mask
+            wildcard_parts = [int(x) for x in wildcard.split('.')]
+            subnet_parts = [255 - x for x in wildcard_parts]
+            subnet_mask = '.'.join(str(x) for x in subnet_parts)
+            
+            # Create network object
+            net = ipaddress.IPv4Network(f"{network}/{subnet_mask}", strict=False)
+            return str(net)
+        except:
+            # Fallback for invalid formats
+            return f"{network}/32"
+
+class CycladesConfigParser:
+    """Parse full Cyclades configuration and extract SNMP section"""
+    
+    def __init__(self):
+        self.snmp_communities: Dict[str, Dict] = {}
+    
+    def parse_config_file(self, filename: str) -> Dict[str, Dict]:
+        """Read and parse Cyclades configuration from file"""
+        try:
+            with open(filename, 'r') as f:
+                config_text = f.read()
+            return self.extract_snmp_config(config_text)
+        except FileNotFoundError:
+            print(f"Error: Configuration file '{filename}' not found")
+            return {}
+        except Exception as e:
+            print(f"Error reading configuration file: {e}")
+            return {}
+    
+    def extract_snmp_config(self, config_text: str) -> Dict[str, Dict]:
+        """Extract and parse SNMP configuration section from full Cyclades config"""
+        
+        # Find the /network/snmp/ section
+        snmp_section = self._extract_snmp_section(config_text)
+        if not snmp_section:
+            print("Warning: No /network/snmp/ section found in configuration")
+            return {}
+        
+        # Parse the SNMP section
+        return self._parse_snmp_section(snmp_section)
+    
+    def _extract_snmp_section(self, config_text: str) -> str:
+        """Extract the /network/snmp/ section from full configuration"""
+        
+        # Look for the start of the SNMP section
+        start_pattern = r'cd\s+/network/snmp/?'
+        start_match = re.search(start_pattern, config_text, re.IGNORECASE)
+        
+        if not start_match:
+            print("Warning: Start delimiter 'cd /network/snmp/' not found")
+            return ""
+        
+        start_pos = start_match.end()  # Start after the cd command
+        
+        # Look specifically for the end delimiter
+        # Try multiple patterns in order of preference
+        end_patterns = [
+            r'commit',  # Short form configuration
+            r'cd\s+/events_and_logs/sensors',  # Newer format
+            r'cd\s+/network/dhcp_server/settings'  # Older format
+        ]
+        
+        end_match = None
+        used_pattern = None
+        
+        for pattern in end_patterns:
+            end_match = re.search(pattern, config_text[start_pos:], re.IGNORECASE)
+            if end_match:
+                used_pattern = pattern
+                print(f"Found end delimiter using pattern: {pattern}")
+                break
+        
+        if end_match:
+            end_pos = start_pos + end_match.start()
+            snmp_section = config_text[start_pos:end_pos]
+            print(f"SNMP section extracted: {len(snmp_section)} characters")
+            return snmp_section
+        else:
+            print("Warning: No recognized end delimiter found. Trying fallback patterns...")
+            # Fallback to next 'cd' command or end of file
+            fallback_pattern = r'\ncd\s+/'
+            fallback_match = re.search(fallback_pattern, config_text[start_pos:])
+            if fallback_match:
+                end_pos = start_pos + fallback_match.start()
+                snmp_section = config_text[start_pos:end_pos]
+                print(f"SNMP section extracted (fallback): {len(snmp_section)} characters")
+                return snmp_section
+            else:
+                snmp_section = config_text[start_pos:]
+                print(f"SNMP section extracted (to end): {len(snmp_section)} characters")
+                return snmp_section
+    
+    def _parse_snmp_section(self, snmp_text: str) -> Dict[str, Dict]:
+        """Parse SNMP section and group by community string"""
+        
+        print(f"Parsing SNMP section: {len(snmp_text)} characters")
+        
+        communities = defaultdict(lambda: {
+            'sources': [],
+            'version': None,
+            'permission': None,
+            'oid': None
+        })
+        
+        # Clean up the text and split into blocks by 'add' statements
+        # Remove the initial cd command if present
+        clean_text = re.sub(r'^cd\s+/network/snmp/?.*?\n', '', snmp_text, flags=re.IGNORECASE)
+        
+        # Split by 'add' keywords, but keep the 'add' in each block
+        blocks = re.split(r'\n(?=add\b)', clean_text, flags=re.IGNORECASE)
+        
+        print(f"Found {len(blocks)} potential blocks")
+        
+        for i, block in enumerate(blocks):
+            block = block.strip()
+            if not block or len(block) < 10:  # Skip very short blocks
+                continue
+                
+            print(f"Processing block {i+1}: {block[:100]}...")
+            
+            # Skip blocks that don't contain 'add' (like delete statements)
+            if not re.search(r'\badd\b', block, re.IGNORECASE):
+                print(f"  Skipping block {i+1} - no 'add' found")
+                continue
+            
+            entry = self._parse_block(block)
+            if entry:
+                community = entry['name']
+                communities[community]['sources'].append(entry['source'])
+                
+                print(f"  Added entry: {community} -> {entry['source']}")
+                
+                # Store other attributes (they should be consistent within a community)
+                if communities[community]['version'] is None:
+                    communities[community]['version'] = entry['version']
+                if communities[community]['permission'] is None:
+                    communities[community]['permission'] = entry['permission']
+                if entry.get('oid') and communities[community]['oid'] is None:
+                    communities[community]['oid'] = entry['oid']
+            else:
+                print(f"  Failed to parse block {i+1}")
+        
+        # Convert defaultdict to regular dict and sort sources
+        result = {}
+        for community, data in communities.items():
+            result[community] = {
+                'sources': sorted(list(set(data['sources']))),  # Remove duplicates and sort
+                'version': data['version'],
+                'permission': data['permission']
+            }
+            if data['oid']:
+                result[community]['oid'] = data['oid']
+        
+        print(f"Final result: {len(result)} communities found")
+        for community, data in result.items():
+            print(f"  {community}: {len(data['sources'])} sources")
+        
+        self.snmp_communities = result
+        return result
+    
+    def extract_hostname(self, config_text: str) -> str:
+        """Extract hostname from /network/settings section"""
+        
+        # Find the /network/settings section
+        settings_pattern = r'cd\s+/network/settings'
+        settings_match = re.search(settings_pattern, config_text, re.IGNORECASE)
+        
+        if not settings_match:
+            return "unknown-hostname"
+        
+        start_pos = settings_match.start()
+        
+        # Find the end of the settings section (next 'cd' command or end of file)
+        remaining_text = config_text[start_pos:]
+        end_pattern = r'\ncd\s+/'
+        end_match = re.search(end_pattern, remaining_text)
+        
+        if end_match:
+            end_pos = start_pos + end_match.start()
+            settings_section = config_text[start_pos:end_pos]
+        else:
+            settings_section = config_text[start_pos:]
+        
+        # Extract hostname
+        hostname_pattern = r'set\s+hostname\s*=\s*([^\s\n]+)'
+        hostname_match = re.search(hostname_pattern, settings_section, re.IGNORECASE)
+        
+        if hostname_match:
+            return hostname_match.group(1).strip()
+        
+        return "unknown-hostname"
+    
+    def _parse_block(self, block: str) -> Optional[Dict[str, str]]:
+        """Parse a single add block"""
+        entry_data = {}
+        
+        # Extract each set command
+        patterns = {
+            'name': r'set\s+name\s*=\s*([^\s\n]+)',
+            'version': r'set\s+version\s*=\s*([^\s\n]+)',
+            'source': r'set\s+source\s*=\s*([^\s\n]+)',
+            'permission': r'set\s+permission\s*=\s*([^\s\n]+)',
+            'oid': r'set\s+oid\s*=\s*([^\s\n]+)'
+        }
+        
+        for key, pattern in patterns.items():
+            match = re.search(pattern, block, re.IGNORECASE)
+            if match:
+                entry_data[key] = match.group(1).strip()
+        
+        # Validate required fields (version is now optional)
+        required_fields = ['name', 'source', 'permission']
+        if all(field in entry_data for field in required_fields):
+            # Set default version if not specified
+            if 'version' not in entry_data:
+                entry_data['version'] = 'version_v2'  # Default for newer configs
+            return entry_data
+        
+        print(f"Missing required fields in block. Found: {list(entry_data.keys())}")
+        return None
+    
+    def to_json(self) -> str:
+        """Convert parsed SNMP communities to JSON"""
+        return json.dumps(self.snmp_communities, indent=2)
+    
+    def to_yaml(self) -> str:
+        """Convert parsed SNMP communities to YAML"""
+        return yaml.dump(self.snmp_communities, default_flow_style=False, indent=2)
+
+class SNMPACLValidator:
+    """Validate Cyclades SNMP configuration against Cisco ACL"""
+    
+    def __init__(self):
+        self.acl_parser = CiscoACLParser()
+        self.config_parser = CycladesConfigParser()
+    
+    def validate_from_files(self, acl_file: str, config_file: str, 
+                           expected_community: str = None) -> Dict[str, Any]:
+        """Validate SNMP configuration against ACL using files"""
+        
+        print("=== Starting ACL validation phase ===")
+        
+        # Parse ACL file
+        print(f"Reading ACL file: {acl_file}")
+        try:
+            acl_networks = set(self.acl_parser.parse_acl_file(acl_file))
+            print(f"ACL parsing completed successfully. Found {len(acl_networks)} networks.")
+        except Exception as e:
+            print(f"ERROR: ACL parsing failed: {e}")
+            return {}
+        
+        print("=== Checking ACL entries ===")
+        for i, network in enumerate(sorted(acl_networks)):
+            print(f"ACL entry {i+1}: {network}")
+        
+        # Parse Cyclades configuration
+        print(f"Reading Cyclades configuration file: {config_file}")
+        try:
+            snmp_communities = self.config_parser.parse_config_file(config_file)
+            print(f"Cyclades config parsing completed. Found {len(snmp_communities)} communities.")
+        except Exception as e:
+            print(f"ERROR: Cyclades config parsing failed: {e}")
+            return {}
+        
+        print("=== Starting validation comparison ===")
+        result = self._validate_communities(acl_networks, snmp_communities, expected_community)
+        print("=== Validation comparison completed ===")
+        
+        return result
+    
+    def _validate_communities(self, acl_networks: Set[str], 
+                             snmp_communities: Dict[str, Dict],
+                             expected_community: str = None) -> Dict[str, Any]:
+        """Validate ACL networks against SNMP communities"""
+        
+        print("=== Starting community validation ===")
+        
+        validation_results = {
+            'acl_networks': sorted(list(acl_networks)),
+            'snmp_communities': snmp_communities,
+            'validation_by_community': {},
+            'overall_summary': {}
+        }
+        
+        total_communities = len(snmp_communities)
+        compliant_communities = 0
+        
+        print(f"Validating {total_communities} communities against {len(acl_networks)} ACL networks")
+        
+        # Validate each community
+        for community_num, (community, community_data) in enumerate(snmp_communities.items(), 1):
+            print(f"=== Processing community {community_num}/{total_communities}: '{community}' ===")
+            
+            configured_networks = set(community_data['sources'])
+            print(f"Community '{community}' has {len(configured_networks)} configured sources")
+            
+            print("Comparing ACL networks against community sources...")
+            missing_networks = acl_networks - configured_networks
+            extra_networks = configured_networks - acl_networks
+            matching_networks = acl_networks & configured_networks
+            
+            print(f"  Matching networks: {len(matching_networks)}")
+            print(f"  Missing networks: {len(missing_networks)}")
+            print(f"  Extra networks: {len(extra_networks)}")
+            
+            is_compliant = len(missing_networks) == 0
+            if is_compliant:
+                compliant_communities += 1
+                print(f"  Community '{community}' is COMPLIANT")
+            else:
+                print(f"  Community '{community}' is NON-COMPLIANT")
+            
+            compliance_percentage = (len(matching_networks) / len(acl_networks) * 100) if acl_networks else 0
+            
+            validation_results['validation_by_community'][community] = {
+                'compliant': is_compliant,
+                'configured_sources': sorted(list(configured_networks)),
+                'matching_networks': sorted(list(matching_networks)),
+                'missing_networks': sorted(list(missing_networks)),
+                'extra_networks': sorted(list(extra_networks)),
+                'summary': {
+                    'total_acl_networks': len(acl_networks),
+                    'configured_networks': len(configured_networks),
+                    'matching_count': len(matching_networks),
+                    'missing_count': len(missing_networks),
+                    'extra_count': len(extra_networks),
+                    'compliance_percentage': round(compliance_percentage, 2)
+                }
+            }
+        
+        print("=== Generating overall summary ===")
+        # Overall summary
+        validation_results['overall_summary'] = {
+            'total_communities': total_communities,
+            'compliant_communities': compliant_communities,
+            'overall_compliance': compliant_communities == total_communities,
+            'community_compliance_rate': round((compliant_communities / total_communities * 100), 2) if total_communities > 0 else 0
+        }
+        
+        print(f"Overall compliance: {compliant_communities}/{total_communities} communities compliant")
+        print("=== Community validation completed ===")
+        
+        return validation_results
+    
+    def get_snmp_json(self) -> str:
+        """Get parsed SNMP configuration as JSON"""
+        return self.config_parser.to_json()
+    
+    def get_snmp_yaml(self) -> str:
+        """Get parsed SNMP configuration as YAML"""
+        return self.config_parser.to_yaml()
+
+    def extract_hostname(self, config_text: str) -> str:
+        """Extract hostname from /network/settings section"""
+        
+        # Find the /network/settings section
+        settings_pattern = r'cd\s+/network/settings'
+        settings_match = re.search(settings_pattern, config_text, re.IGNORECASE)
+        
+        if not settings_match:
+            return "unknown-hostname"
+        
+        start_pos = settings_match.start()
+        
+        # Find the end of the settings section (next 'cd' command or end of file)
+        remaining_text = config_text[start_pos:]
+        end_pattern = r'\ncd\s+/'
+        end_match = re.search(end_pattern, remaining_text)
+        
+        if end_match:
+            end_pos = start_pos + end_match.start()
+            settings_section = config_text[start_pos:end_pos]
+        else:
+            settings_section = config_text[start_pos:]
+        
+        # Extract hostname
+        hostname_pattern = r'set\s+hostname\s*=\s*([^\s\n]+)'
+        hostname_match = re.search(hostname_pattern, settings_section, re.IGNORECASE)
+        
+        if hostname_match:
+            return hostname_match.group(1).strip()
+        
+        return "unknown-hostname"
+
+    def extract_hostname(self, config_text: str) -> str:
+        """Extract hostname from /network/settings section"""
+        
+        # Find the /network/settings section
+        settings_pattern = r'cd\s+/network/settings'
+        settings_match = re.search(settings_pattern, config_text, re.IGNORECASE)
+        
+        if not settings_match:
+            return "unknown-hostname"
+        
+        start_pos = settings_match.start()
+        
+        # Find the end of the settings section (next 'cd' command or end of file)
+        remaining_text = config_text[start_pos:]
+        end_pattern = r'\ncd\s+/'
+        end_match = re.search(end_pattern, remaining_text)
+        
+        if end_match:
+            end_pos = start_pos + end_match.start()
+            settings_section = config_text[start_pos:end_pos]
+        else:
+            settings_section = config_text[start_pos:]
+        
+        # Extract hostname
+        hostname_pattern = r'set\s+hostname\s*=\s*([^\s\n]+)'
+        hostname_match = re.search(hostname_pattern, settings_section, re.IGNORECASE)
+        
+        if hostname_match:
+            return hostname_match.group(1).strip()
+        
+        return "unknown-hostname"
+
+def extract_hostname_from_config(config_text: str) -> str:
+    """Extract hostname from /network/settings section"""
+    
+    print("Attempting to extract hostname...")
+    
+    # Find the /network/settings section
+    settings_pattern = r'cd\s+/network/settings'
+    settings_match = re.search(settings_pattern, config_text, re.IGNORECASE)
+    
+    if not settings_match:
+        print("Warning: 'cd /network/settings' section not found")
+        return "unknown-hostname"
+    
+    start_pos = settings_match.start()
+    print(f"Found /network/settings section at position {start_pos}")
+    
+    # Find the end of the settings section (next 'cd' command or end of file)
+    remaining_text = config_text[start_pos:]
+    end_pattern = r'\ncd\s+/'
+    end_match = re.search(end_pattern, remaining_text)
+    
+    if end_match:
+        end_pos = start_pos + end_match.start()
+        settings_section = config_text[start_pos:end_pos]
+        print(f"Settings section ends at position {end_pos}")
+    else:
+        settings_section = config_text[start_pos:]
+        print("Settings section extends to end of file")
+    
+    print(f"Settings section length: {len(settings_section)} characters")
+    print(f"First 200 chars of settings section: {settings_section[:200]}")
+    
+    # Extract hostname with multiple patterns
+    hostname_patterns = [
+        r'set\s+hostname\s*=\s*([^\s\n\r]+)',
+        r'hostname\s*=\s*([^\s\n\r]+)',
+        r'set\s*hostname\s*:\s*([^\s\n\r]+)',
+        r'hostname\s*:\s*([^\s\n\r]+)'
+    ]
+    
+    for i, pattern in enumerate(hostname_patterns):
+        print(f"Trying hostname pattern {i+1}: {pattern}")
+        hostname_match = re.search(pattern, settings_section, re.IGNORECASE)
+        if hostname_match:
+            hostname = hostname_match.group(1).strip()
+            print(f"SUCCESS: Found hostname '{hostname}' with pattern {i+1}")
+            return hostname
+        else:
+            print(f"Pattern {i+1} did not match")
+    
+    print("ERROR: No hostname found with any pattern")
+    return "unknown-hostname"
+
+def process_uot_files(folder_path: str = ".") -> None:
+    """Process all .log files containing 'uot' in their name"""
+    
+    # ACL file should be in the same folder
+    acl_file = os.path.join(folder_path, "acl-80.txt")
+    
+    if not os.path.exists(acl_file):
+        print(f"Error: {acl_file} not found. Please ensure acl-80.txt is in the folder.")
+        return
+    
+    # Find all .log files containing 'uot'
+    log_files = []
+    print(f"Scanning folder: {folder_path}")
+    
+    try:
+        all_files = os.listdir(folder_path)
+        print(f"Found {len(all_files)} total files in directory")
+        
+        for filename in all_files:
+            print(f"Checking file: {filename}")
+            if filename.endswith('.log'):
+                print(f"  - Is .log file: {filename}")
+                if 'uot' in filename.lower():
+                    log_files.append(filename)
+                    print(f"  - Contains 'uot': {filename} -> ADDED")
+                else:
+                    print(f"  - Does not contain 'uot': {filename} -> SKIPPED")
+            else:
+                print(f"  - Not .log file: {filename} -> SKIPPED")
+                
+    except Exception as e:
+        print(f"Error scanning directory: {e}")
+        return
+    
+    if not log_files:
+        print(f"No .log files containing 'uot' found in {folder_path}")
+        print("Files must:")
+        print("  1. Have .log extension")
+        print("  2. Contain 'uot' in the filename (case insensitive)")
+        return
+    
+    print(f"\nFinal list of files to process: {log_files}")
+    print(f"Total files to process: {len(log_files)}")
+    
+    # Process each file
+    for log_file in log_files:
+        print(f"\n=== Processing {log_file} ===")
+        
+        config_file_path = os.path.join(folder_path, log_file)
+        
+        # Create validator and parse config to get hostname
+        validator = SNMPACLValidator()
+        
+        try:
+            with open(config_file_path, 'r') as f:
+                config_text = f.read()
+            
+            # Extract hostname
+            hostname = extract_hostname_from_config(config_text)
+            
+            # Use filename as fallback if hostname extraction fails
+            if hostname == "unknown-hostname":
+                # Extract base filename without extension and path
+                fallback_hostname = os.path.splitext(os.path.basename(log_file))[0]
+                print(f"Using filename as hostname fallback: {fallback_hostname}")
+                hostname = fallback_hostname
+            
+            print(f"Final hostname for processing: {hostname}")
+            print(f"Extracted hostname: {hostname}")
+            
+            # Validate configuration
+            validation = validator.validate_from_files(acl_file, config_file_path)
+            
+            # Generate output filename
+            audit_folder = os.path.join(folder_path, "avocent_audit")
+            
+            # Create audit folder if it doesn't exist
+            if not os.path.exists(audit_folder):
+                os.makedirs(audit_folder)
+                print(f"Created audit folder: {audit_folder}")
+            
+            output_file = os.path.join(audit_folder, f"config-audit-{hostname}.txt")
+            
+            # Write results to output file
+            print(f"Writing audit report to: {output_file}")
+            write_audit_report(output_file, log_file, hostname, validation, validator)
+            
+            # Generate and save missing configuration
+            config_file_path = os.path.join(audit_folder, f"missing-config-{hostname}.txt")
+            missing_config = generate_missing_config(validation, hostname)
+            
+            if missing_config:
+                print(f"\n=== MISSING CONFIGURATION FOR {hostname} ===")
+                print(missing_config)
+                print("=" * 60)
+                
+                # Save missing config to file
+                with open(config_file_path, 'w', encoding='utf-8') as config_f:
+                    config_f.write(f"# Missing SNMP Configuration for {hostname}\n")
+                    config_f.write(f"# Generated from audit\n\n")
+                    config_f.write("cd /network/snmp/\n")
+                    config_f.write(missing_config)
+                
+                print(f"Missing configuration saved to: {config_file_path}")
+            else:
+                print(f"PASS - No missing configuration needed for {hostname}")
+            
+            # Show actual compliance status
+            overall_compliance = validation.get('overall_summary', {}).get('overall_compliance', False)
+            compliance_status = "PASS" if overall_compliance else "FAIL"
+            print(f"{compliance_status} - Avocent audit complete for {hostname} - Compliance: {compliance_status}")
+            print("=" * 60)
+            
+        except Exception as e:
+            print(f"✗ Error processing {log_file}: {e}")
+            continue
+
+def generate_missing_config(validation: Dict, hostname: str) -> str:
+    """Generate configuration commands for missing networks and delete commands for extra networks"""
+    
+    config_lines = []
+    
+    community_results = validation.get('validation_by_community', {})
+    snmp_communities = validation.get('snmp_communities', {})
+    
+    for community, results in community_results.items():
+        missing_networks = results.get('missing_networks', [])
+        extra_networks = results.get('extra_networks', [])
+        
+        # Add missing networks
+        if missing_networks:
+            config_lines.append(f"# Missing networks for community: {community}")
+            
+            for network in missing_networks:
+                config_lines.append("add")
+                config_lines.append(f"set name={community}")
+                config_lines.append("set version=version_v2")
+                config_lines.append(f"set source={network}")
+                config_lines.append("set permission=read_only")
+                config_lines.append("save --cancelOnError")
+                config_lines.append("")  # Empty line between blocks
+        
+        # Delete extra networks
+        if extra_networks:
+            config_lines.append(f"# Extra networks to delete for community: {community}")
+            
+            for network in extra_networks:
+                # Convert CIDR to delete format: 10.1.1.0/24 -> 10.1.1.0|24
+                network_formatted = network.replace('/', '|')
+                delete_command = f"delete {community}_v1|v2_{network_formatted}"
+                config_lines.append(delete_command)
+            
+            config_lines.append("")  # Empty line after delete section
+    
+    return "\n".join(config_lines) if config_lines else ""
+
+def write_audit_report(output_file: str, source_file: str, hostname: str, 
+                      validation: Dict, validator: SNMPACLValidator) -> None:
+    """Write detailed audit report to file"""
+    
+    print(f"Generating audit report for {hostname}...")
+    print(f"Writing to file: {output_file}")
+    
+    # Test if we can write to the file at all
+    try:
+        print("Testing file write access...")
+        with open(output_file, 'w') as test_f:
+            test_f.write("TEST\n")
+        print("File write test successful")
+    except Exception as e:
+        print(f"ERROR: Cannot write to file {output_file}: {e}")
+        return
+    
+    try:
+        with open(output_file, 'w', encoding='utf-8') as f:
+            print("File opened successfully")
+            
+            print("Writing basic header line 1...")
+            f.write("=" * 80 + "\n")
+            f.flush()
+            
+            print("Writing basic header line 2...")
+            f.write(f"CYCLADES SNMP CONFIGURATION AUDIT REPORT\n")
+            f.flush()
+            
+            print("Writing basic header line 3...")
+            f.write("=" * 80 + "\n")
+            f.flush()
+            
+            print("Writing source file info...")
+            f.write(f"Source File: {source_file}\n")
+            f.flush()
+            
+            print("Writing hostname info...")
+            f.write(f"Hostname: {hostname}\n")
+            f.flush()
+            
+            print("Getting current timestamp...")
+            try:
+                import datetime
+                current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                print(f"Timestamp generated: {current_time}")
+                f.write(f"Audit Date: {current_time}\n")
+                f.flush()
+            except Exception as e:
+                print(f"Warning: Could not get timestamp: {e}")
+                f.write(f"Audit Date: Unknown\n")
+                f.flush()
+            
+            print("Writing final header line...")
+            f.write("=" * 80 + "\n\n")
+            f.flush()
+            
+            print("Header completed successfully")
+            
+            print("Writing SNMP configuration section...")
+            f.write("SNMP CONFIGURATION BY COMMUNITY\n")
+            f.write("-" * 40 + "\n")
+            f.flush()
+            
+            print("Getting YAML from validator...")
+            try:
+                print("Calling validator.get_snmp_yaml()...")
+                yaml_content = validator.get_snmp_yaml()
+                print(f"YAML content received, length: {len(yaml_content)} characters")
+                print(f"First 100 chars of YAML: {yaml_content[:100]}")
+                f.write(yaml_content)
+                f.write("\n")
+                f.flush()
+                print("YAML written successfully")
+            except Exception as e:
+                print(f"Error getting YAML: {e}")
+                import traceback
+                print(f"YAML error traceback: {traceback.format_exc()}")
+                f.write("Error generating YAML content\n\n")
+                f.flush()
+            
+            print("Writing overall summary...")
+            overall = validation.get('overall_summary', {})
+            print(f"Overall summary data: {overall}")
+            
+            f.write("OVERALL COMPLIANCE SUMMARY\n")
+            f.write("-" * 40 + "\n")
+            f.write(f"Overall Compliance: {'PASS' if overall.get('overall_compliance', False) else 'FAIL'}\n")
+            f.write(f"Total Communities: {overall.get('total_communities', 0)}\n")
+            f.write(f"Compliant Communities: {overall.get('compliant_communities', 0)}\n")
+            f.write(f"Community Compliance Rate: {overall.get('community_compliance_rate', 0)}%\n\n")
+            f.flush()
+            print("Overall summary written successfully")
+            
+            print("Writing ACL networks...")
+            acl_networks = validation.get('acl_networks', [])
+            print(f"Found {len(acl_networks)} ACL networks to write")
+            
+            f.write("ACL INTENT NETWORKS\n")
+            f.write("-" * 40 + "\n")
+            for i, network in enumerate(acl_networks):
+                if i % 10 == 0:  # Progress indicator every 10 networks
+                    print(f"  Writing ACL network {i+1}/{len(acl_networks)}")
+                f.write(f"  {network}\n")
+            f.write("\n")
+            f.flush()
+            
+            print("Writing detailed validation by community...")
+            community_results = validation.get('validation_by_community', {})
+            community_count = len(community_results)
+            print(f"Processing {community_count} communities...")
+            
+            f.write("DETAILED VALIDATION BY COMMUNITY\n")
+            f.write("-" * 40 + "\n")
+            
+            for i, (community, results) in enumerate(community_results.items(), 1):
+                print(f"Processing community {i}/{community_count}: {community}")
+                
+                f.write(f"\nCommunity: {community}\n")
+                f.write(f"Status: {'COMPLIANT' if results.get('compliant', False) else 'NON-COMPLIANT'}\n")
+                
+                summary = results.get('summary', {})
+                f.write(f"Networks Matched: {summary.get('matching_count', 0)}/{summary.get('total_acl_networks', 0)}\n")
+                f.write(f"Compliance Percentage: {summary.get('compliance_percentage', 0)}%\n")
+                
+                matching_networks = results.get('matching_networks', [])
+                if matching_networks:
+                    print(f"  Writing {len(matching_networks)} matching networks")
+                    f.write(f"[PASS] Matching Networks:\n")
+                    for network in matching_networks:
+                        f.write(f"    {network}\n")
+                
+                missing_networks = results.get('missing_networks', [])
+                if missing_networks:
+                    print(f"  Found {len(missing_networks)} missing networks for community {community}")
+                    f.write(f"[FAIL] Missing Networks (in ACL but not in SNMP config):\n")
+                    for network in missing_networks:
+                        f.write(f"    {network}\n")
+                    
+                    print(f"  Writing configuration for {len(missing_networks)} missing networks")
+                    # Add configuration commands to add missing networks
+                    f.write(f"\n  CONFIGURATION TO ADD MISSING NETWORKS:\n")
+                    for j, network in enumerate(missing_networks):
+                        if j % 5 == 0:  # Progress every 5 networks
+                            print(f"    Writing config block {j+1}/{len(missing_networks)}")
+                        f.write(f"  add\n")
+                        f.write(f"  set name={community}\n")
+                        f.write(f"  set version=version_v2\n")
+                        f.write(f"  set source={network}\n")
+                        f.write(f"  set permission=read_only\n")
+                        f.write(f"  save --cancelOnError\n")
+                        f.write(f"\n")
+                else:
+                    print(f"  No missing networks for community {community}")
+                
+                extra_networks = results.get('extra_networks', [])
+                if extra_networks:
+                    print(f"  Writing {len(extra_networks)} extra networks")
+                    f.write(f"[WARN] Extra Networks (in SNMP config but not in ACL):\n")
+                    for network in extra_networks:
+                        f.write(f"    {network}\n")
+                
+                f.write("\n" + "-" * 40 + "\n")
+                f.flush()
+            
+            f.write("\n")
+            f.flush()
+            
+            # Write raw JSON data at the end
+            print("Writing raw JSON data...")
+            f.write("\nRAW VALIDATION DATA (JSON)\n")
+            f.write("-" * 40 + "\n")
+            
+            print("Converting validation data to JSON...")
+            try:
+                json_data = json.dumps(validation, indent=2)
+                print(f"JSON data length: {len(json_data)} characters")
+                f.write(json_data)
+            except Exception as e:
+                print(f"Error converting to JSON: {e}")
+                f.write("Error generating JSON data")
+        
+        print(f"Audit report written successfully to {output_file}")
+        
+    except Exception as e:
+        print(f"ERROR writing audit report: {e}")
+        import traceback
+        print(f"Full traceback: {traceback.format_exc()}")
+        raise
+
+def main():
+    """Main execution function"""
+    
+    import sys
+    
+    # Check if folder path provided as argument
+    folder_path = sys.argv[1] if len(sys.argv) > 1 else "."
+    
+    if not os.path.exists(folder_path):
+        print(f"Error: Folder path '{folder_path}' does not exist")
+        return
+    
+    # Check if ACL file exists
+    acl_file = os.path.join(folder_path, "acl-80.txt")
+    if not os.path.exists(acl_file):
+        print(f"Creating sample {acl_file}...")
+        sample_acl = """access-list 80 permit 10.1.1.0 0.0.0.255
+access-list 80 permit 10.1.2.0 0.0.0.255
+access-list 80 permit 10.1.3.0 0.0.0.255
+access-list 80 permit 10.1.100.0 0.0.0.255"""
+        
+        with open(acl_file, 'w') as f:
+            f.write(sample_acl)
+        print(f"Sample {acl_file} created. Please edit it with your actual ACL.")
+        return
+    
+    # Process all UOT files
+    process_uot_files(folder_path)
+
+if __name__ == "__main__":
+    main()
