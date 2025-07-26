@@ -1,0 +1,257 @@
+NX-OS Dual-Stage Configuration Flashcards
+Card 1: Standard Configuration Push
+Scenario: Deploying new VLAN configuration with interfaces
+Start Dual-Stage Session
+bashswitch# configure session VLAN_DEPLOY
+Config Session started, Session ID is 1
+Enter configuration commands, one per line. End with CNTL/Z.
+switch(config-s)#
+Add Candidate Configuration
+bashswitch(config-s)# vlan 100
+switch(config-s-vlan)# name Production_Web
+switch(config-s-vlan)# exit
+switch(config-s)# vlan 200
+switch(config-s-vlan)# name Production_DB
+switch(config-s-vlan)# exit
+switch(config-s)# interface ethernet 1/10
+switch(config-s-if)# switchport mode access
+switch(config-s-if)# switchport access vlan 100
+switch(config-s-if)# exit
+Validate Configuration
+bash# View staged changes
+switch(config-s)# show configuration session
+
+# Verify syntax and dependencies
+switch(config-s)# verify
+
+# Preview how running config will look
+switch(config-s)# show running-config vlan
+switch(config-s)# show running-config interface ethernet 1/10
+Commit Configuration
+bashswitch(config-s)# commit
+Commit Successful
+switch#
+Best Practice: Always verify before commit, use descriptive session names
+
+Card 2: Configuration Rollback Scenario
+Scenario: Pre-staging rollback configuration before major change
+Stage Rollback Configuration First
+bashswitch# configure session ROLLBACK_READY
+switch(config-s)# interface ethernet 1/1-24
+switch(config-s-if-range)# shutdown
+switch(config-s-if-range)# exit
+switch(config-s)# no vlan 50-60
+switch(config-s)# save bootflash:rollback_config.txt
+switch(config-s)# abort
+Execute Primary Change
+bashswitch# configure session PRIMARY_CHANGE
+switch(config-s)# vlan 50-60
+switch(config-s-vlan-range)# exit
+switch(config-s)# interface ethernet 1/1-24
+switch(config-s-if-range)# switchport mode trunk
+switch(config-s-if-range)# switchport trunk allowed vlan 50-60
+switch(config-s-if-range)# no shutdown
+Validate Before Commit
+bashswitch(config-s)# verify
+switch(config-s)# show interface ethernet 1/1 switchport
+switch(config-s)# show vlan brief
+Commit Primary Change
+bashswitch(config-s)# commit
+Execute Rollback if Needed
+bashswitch# configure session EXECUTE_ROLLBACK
+switch(config-s)# load bootflash:rollback_config.txt
+switch(config-s)# verify
+switch(config-s)# commit
+Best Practice: Always stage rollback before major changes, test rollback procedure
+
+Card 3: Multiple Candidate Configuration Management
+Scenario: Managing multiple staged configurations for coordinated deployment
+Create Multiple Sessions
+bash# Session 1: Core routing changes
+switch# configure session CORE_ROUTING
+switch(config-s)# router ospf 1
+switch(config-s-router)# area 0 range 10.1.0.0/16
+switch(config-s-router)# exit
+switch(config-s)# save bootflash:core_routing.txt
+
+# Session 2: Access layer changes  
+switch# configure session ACCESS_LAYER
+switch(config-s)# vlan 300-350
+switch(config-s-vlan-range)# exit
+switch(config-s)# interface range ethernet 2/1-48
+switch(config-s-if-range)# switchport access vlan 300
+switch(config-s-if-range)# exit
+switch(config-s)# save bootflash:access_layer.txt
+
+# Session 3: Security policies
+switch# configure session SECURITY_POLICY
+switch(config-s)# ip access-list PROD_FILTER
+switch(config-s-acl)# 10 permit tcp 10.1.0.0/16 any eq 443
+switch(config-s-acl)# 20 deny ip any any log
+switch(config-s-acl)# exit
+switch(config-s)# save bootflash:security_policy.txt
+View All Active Sessions
+bashswitch# show configuration session summary
+Validate Each Session Independently
+bash# Validate core routing
+switch# configure session CORE_ROUTING
+switch(config-s)# verify
+switch(config-s)# show running-config router ospf
+
+# Validate access layer
+switch# configure session ACCESS_LAYER  
+switch(config-s)# verify
+switch(config-s)# show vlan brief
+
+# Validate security
+switch# configure session SECURITY_POLICY
+switch(config-s)# verify  
+switch(config-s)# show ip access-list
+Coordinated Deployment
+bash# Deploy in order: core first, then access, then security
+switch# configure session CORE_ROUTING
+switch(config-s)# commit
+
+switch# configure session ACCESS_LAYER
+switch(config-s)# commit
+
+switch# configure session SECURITY_POLICY
+switch(config-s)# commit
+Best Practice: Use logical session names, deploy in dependency order, save sessions for reuse
+
+Card 4: Configuration Validation and Testing
+Scenario: Comprehensive validation before deployment
+Start Session with Validation Focus
+bashswitch# configure session QOS_VALIDATION
+switch(config-s)# class-map type qos match-all VOICE
+switch(config-s-cmap-qos)# match dscp ef
+switch(config-s-cmap-qos)# exit
+switch(config-s)# policy-map type qos VOICE_POLICY
+switch(config-s-pmap-qos)# class VOICE
+switch(config-s-pmap-c-qos)# set qos-group 1
+switch(config-s-pmap-c-qos)# exit
+switch(config-s-pmap-qos)# exit
+Comprehensive Validation Methods
+bash# Syntax validation
+switch(config-s)# verify
+
+# Preview configuration impact
+switch(config-s)# show configuration session
+switch(config-s)# show policy-map type qos VOICE_POLICY
+switch(config-s)# show class-map type qos VOICE
+
+# Test configuration interaction
+switch(config-s)# show running-config | include qos
+switch(config-s)# show interface ethernet 1/1 | include qos
+Staged Testing Approach
+bash# Save current state first
+switch(config-s)# save bootflash:pre_qos_config.txt
+
+# Apply to test interface first
+switch(config-s)# interface ethernet 1/48
+switch(config-s-if)# service-policy type qos input VOICE_POLICY
+switch(config-s-if)# exit
+switch(config-s)# commit
+
+# Validate on test interface
+switch# show interface ethernet 1/48 | include policy
+switch# show policy-map interface ethernet 1/48
+
+# If successful, apply to production interfaces
+switch# configure session QOS_PRODUCTION
+switch(config-s)# interface range ethernet 1/1-47
+switch(config-s-if-range)# service-policy type qos input VOICE_POLICY
+switch(config-s-if-range)# exit
+switch(config-s)# commit
+Best Practice: Always test on non-production interfaces first, save pre-change state
+
+Card 5: Recovery and Clean State Management
+Scenario: Comprehensive recovery procedures
+Save Current State Before Changes
+bashswitch# copy running-config bootflash:baseline_config_$(date).txt
+switch# configure session RECOVERY_PREP
+switch(config-s)# save bootflash:current_session.txt
+Multiple Recovery Options
+Option 1: Session Abort (Uncommitted Changes)
+bashswitch(config-s)# abort
+# All staged changes discarded, no impact to running config
+Option 2: Selective Session Cleanup
+bash# View all sessions
+switch# show configuration session summary
+
+# Clean specific session
+switch# configure session UNWANTED_SESSION
+switch(config-s)# abort
+
+# Or delete saved session file
+switch# delete bootflash:unwanted_session.txt
+Option 3: Complete Configuration Rollback
+bash# Using saved baseline
+switch# configure replace bootflash:baseline_config.txt
+
+# With automatic rollback timer (safety net)
+switch# configure replace bootflash:baseline_config.txt commit-timeout 300
+# System will automatically rollback in 5 minutes unless confirmed
+
+# Confirm the change (stop rollback timer)
+switch# configure replace commit
+
+# Or let it rollback automatically if issues occur
+Option 4: Granular Rollback
+bashswitch# configure session GRANULAR_ROLLBACK
+switch(config-s)# no vlan 100-200
+switch(config-s)# interface range ethernet 1/1-24
+switch(config-s-if-range)# shutdown
+switch(config-s-if-range)# no switchport mode
+switch(config-s-if-range)# exit
+switch(config-s)# verify
+switch(config-s)# commit
+Emergency Recovery Commands
+bash# Clear all active sessions (nuclear option)
+switch# clear configuration session
+
+# Reload to last saved startup config
+switch# reload
+
+# Boot from alternate image if needed
+switch# boot system bootflash:previous_image.bin
+Best Practice: Multiple recovery options, always have rollback plan, use commit timers for major changes
+
+Card 6: Advanced Best Practices Summary
+Pre-Change Checklist
+
+ Take configuration backup
+ Document change procedure
+ Prepare rollback procedure
+ Verify maintenance window
+ Stage rollback configuration
+ Test on non-production first
+
+During Change Best Practices
+
+ Use descriptive session names
+ Verify before commit
+ Use commit timers for major changes
+ Monitor system during change
+ Document any deviations
+
+Post-Change Validation
+
+ Verify functionality
+ Check logs for errors
+ Confirm rollback procedure
+ Update documentation
+ Clean up temporary files
+
+Session Management Commands
+bash# Essential monitoring commands
+show configuration session summary
+show configuration session <name>
+show terminal lock
+show system resources
+
+# Cleanup commands  
+clear configuration session
+delete bootflash:session_files*
+copy running-config startup-config
+Golden Rule: Never commit without verify, always have a rollback plan, test everything twice
