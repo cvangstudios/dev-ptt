@@ -585,45 +585,45 @@ def main():
     # Pre-check all serials for valid ConfigurationIntent
     valid_serials, invalid_serials = check_configuration_intent(serial_numbers, BASE_URL_TEMPLATE)
     
-    if not valid_serials:
-        print("❌ No valid serials to process. Exiting...")
-        sys.exit(1)
-    
     # Create output directory in same folder as script
     safe_project_name = "".join(c for c in project_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
     output_dir = script_dir / safe_project_name.replace(' ', '_')
     output_dir.mkdir(exist_ok=True)
     
     print(f"📁 Output directory: {output_dir}")
-    print(f"🚀 Starting data collection for {len(valid_serials)} valid serial numbers...\n")
+    print(f"🚀 Starting JSON processing for ALL {len(serial_numbers)} serial numbers...")
+    print(f"📊 Will include {len(valid_serials)} valid serials in Excel output\n")
     
-    # Collect data for valid serial numbers only
+    # Process ALL serial numbers (for JSON files)
     all_csv_data = []
     successful_count = 0
     
-    for i, serial_number in enumerate(valid_serials, 1):
-        print(f"[{i}/{len(valid_serials)}] Processing: {serial_number}")
+    for i, serial_number in enumerate(serial_numbers, 1):
+        print(f"[{i}/{len(serial_numbers)}] Processing: {serial_number}")
         
-        # Fetch JSON data
+        # Always fetch JSON data for every serial
         data = fetch_json_data(serial_number, BASE_URL_TEMPLATE)
         
         if data is not None:
-            # Print pretty JSON to terminal
+            # Always print pretty JSON to terminal
             print("📄 JSON Response:")
             print("-" * 40)
             print(json.dumps(data, indent=2, ensure_ascii=False))
             print("-" * 40)
             
-            # Create pretty JSON file
+            # Always create pretty JSON file
             create_pretty_json_file(serial_number, data, project_name, output_dir)
             
-            # Extract data for CSV (with error handling)
-            csv_row = extract_csv_data(serial_number, data)
-            if csv_row is not None:
-                all_csv_data.append(csv_row)
-                print(f"✅ CSV data extracted successfully for {serial_number}")
+            # Only extract CSV data for valid serials (those with valid ConfigurationIntent)
+            if serial_number in valid_serials:
+                csv_row = extract_csv_data(serial_number, data)
+                if csv_row is not None:
+                    all_csv_data.append(csv_row)
+                    print(f"✅ CSV data extracted successfully for {serial_number}")
+                else:
+                    print(f"⚠️  CSV extraction failed for {serial_number} (unexpected error)")
             else:
-                print(f"⚠️  Skipping CSV data for {serial_number} due to extraction errors")
+                print(f"⚠️  Skipping CSV extraction for {serial_number} (null ConfigurationIntent from pre-check)")
             
             successful_count += 1
         
