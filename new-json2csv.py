@@ -348,6 +348,12 @@ def main():
         data = fetch_json_data(serial_number, BASE_URL_TEMPLATE)
         
         if data is not None:
+            # Print pretty JSON to terminal
+            print("📄 JSON Response:")
+            print("-" * 40)
+            print(json.dumps(data, indent=2, ensure_ascii=False))
+            print("-" * 40)
+            
             # Create pretty JSON file
             create_pretty_json_file(serial_number, data, project_name, output_dir)
             
