@@ -281,27 +281,18 @@ def extract_csv_data(serial_number, data, valid_serials):
             
             print(f"   Using FULL extraction for {serial_number} (valid ConfigurationIntent)")
             
-            # Extract ConfigurationIntent specific data
+            # CUSTOMIZE THIS SECTION - Add your specific field extractions for valid ConfigurationIntent devices
+            """
             config_intent = data.get('ConfigurationIntent', {})
             intent_data = config_intent.get('IntentData', {})
-            port_pools = intent_data.get('port_pools', [])
             
-            if port_pools and len(port_pools) > 0:
-                first_pool = port_pools[0]
-                csv_row.update({
-                    'pool_name': first_pool.get('pool_name', ''),
-                    'make': first_pool.get('make', ''),
-                    'model': first_pool.get('model', ''),
-                })
-            else:
-                csv_row.update({
-                    'pool_name': 'No Port Pools',
-                    'make': '',
-                    'model': '',
-                })
-            
-            # Add any other full extraction fields here
-            # csv_row['additional_field'] = config_intent.get('other_data', '')
+            # Add your specific field extractions here
+            csv_row.update({
+                'your_field_1': intent_data.get('your_field_1', ''),
+                'your_field_2': intent_data.get('your_field_2', ''),
+                # Add more fields as needed
+            })
+            """
             
         else:
             # BASIC EXTRACTION - Null ConfigurationIntent
@@ -309,21 +300,13 @@ def extract_csv_data(serial_number, data, valid_serials):
             
             print(f"   Using BASIC extraction for {serial_number} (null ConfigurationIntent)")
             
-            # Extract only basic/general fields that exist regardless of ConfigurationIntent
-            csv_row.update({
-                'pool_name': 'N/A (Null Intent)',
-                'make': 'N/A',
-                'model': 'N/A',
-            })
-            
-            # Extract basic fields that might exist at top level
-            # Customize these based on what fields are available in null ConfigurationIntent devices
+            # CUSTOMIZE THIS SECTION - Add basic fields that exist regardless of ConfigurationIntent
             """
             csv_row.update({
                 'device_id': data.get('device_id', ''),
                 'timestamp': data.get('timestamp', ''),
                 'status': data.get('status', ''),
-                'basic_info': data.get('basic_info', ''),
+                # Add more basic fields as needed
             })
             """
         
