@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """
 Generic API JSON Scraper with Excel Export
-Version: 2.0
+Version: 2.1
 Description: Fetches JSON data from API endpoints using serial numbers,
              creates pretty-printed JSON files, and consolidates data into Excel.
              Processes ALL serials with conditional extraction (full vs basic).
              NO SERIALS ARE SKIPPED - all get processed for CSV/Excel output.
+             
+             NEW: Self-learning device type discovery and JSON structure analysis.
+             Script automatically discovers new device types and updates itself.
 
 Usage: python script.py
 Requirements: 'serials.txt' file in same directory as script
@@ -19,6 +22,8 @@ Key Features:
 - Creates JSON files for every serial number
 - Consolidated Excel/CSV output with all processed serials
 - Configurable debug mode for troubleshooting
+- Device type discovery and JSON structure analysis
+- Self-modifying script with persistent device type dictionary
 """
 
 import subprocess
@@ -27,8 +32,10 @@ import csv
 import os
 import sys
 import getpass
+import shutil
 from datetime import datetime
 from pathlib import Path
+from collections import defaultdict
 
 try:
     import openpyxl
@@ -43,14 +50,386 @@ except ImportError:
     print("   Falling back to CSV format...")
 
 # Script Configuration
-SCRIPT_VERSION = "2.0"
+SCRIPT_VERSION = "2.1"
 BASE_URL_TEMPLATE = "https://acme.com/sn="  # Modify this for your API endpoint
 
 # Debug Configuration - Set to True for verbose debugging
 DEBUG_MODE = True  # Change to False to reduce console output
 
+# ================================================================
+# SELF-LEARNING DEVICE TYPE DISCOVERY SYSTEM
+# This dictionary is automatically updated when new device types are discovered
+# DO NOT MANUALLY EDIT - the script will modify this section automatically
+# ================================================================
+DISCOVERED_DEVICE_TYPES = {
+    # Format: 'device_type': {'count': number, 'last_seen': 'YYYY-MM-DD', 'first_seen': 'YYYY-MM-DD'}
+    # Example entries (will be auto-populated):
+    # 'router': {'count': 15, 'last_seen': '2025-01-20', 'first_seen': '2025-01-15'},
+    # 'switch': {'count': 8, 'last_seen': '2025-01-19', 'first_seen': '2025-01-10'},
+}
 
-def debug_print(message, force=False):
+
+def analyze_json_structure(data, device_type, max_depth=10):
+    """
+    Analyze JSON structure and document all available keys and access patterns.
+    Creates comprehensive documentation for accessing nested data.
+    
+    Args:
+        data (dict): JSON data to analyze
+        device_type (str): Device type for categorization
+        max_depth (int): Maximum traversal depth (default: 10)
+    
+    Returns:
+        dict: Analysis results with paths, access patterns, and statistics
+    """
+    if not isinstance(data, dict):
+        return {'error': 'Data is not a dictionary', 'data_type': str(type(data))}
+    
+    analysis = {
+        'device_type': device_type,
+        'analysis_timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        'total_keys': 0,
+        'max_depth_found': 0,
+        'paths': {},
+        'access_patterns': [],
+        'data_types': {},
+        'sample_values': {}
+    }
+    
+    def traverse_json(obj, path="data", current_depth=0):
+        """Recursively traverse JSON and document all paths."""
+        if current_depth > max_depth:
+            return
+        
+        analysis['max_depth_found'] = max(analysis['max_depth_found'], current_depth)
+        
+        if isinstance(obj, dict):
+            for key, value in obj.items():
+                current_path = f"{path}['{key}']" if path != "data" else f"data['{key}']"
+                analysis['total_keys'] += 1
+                
+                # Document the path and access pattern
+                analysis['paths'][current_path] = {
+                    'depth': current_depth,
+                    'data_type': str(type(value).__name__),
+                    'access_code': f"value = {current_path}",
+                    'safe_access_code': f"value = {path}.get('{key}', '') if isinstance({path}, dict) else ''"
+                }
+                
+                # Store data type
+                analysis['data_types'][current_path] = str(type(value).__name__)
+                
+                # Store sample value (truncated if too long)
+                if isinstance(value, (str, int, float, bool)):
+                    sample = str(value)
+                    analysis['sample_values'][current_path] = sample[:100] + '...' if len(sample) > 100 else sample
+                elif value is None:
+                    analysis['sample_values'][current_path] = 'null'
+                elif isinstance(value, (list, dict)):
+                    analysis['sample_values'][current_path] = f"{type(value).__name__} with {len(value)} items"
+                
+                # Continue traversing
+                if isinstance(value, dict) and current_depth < max_depth:
+                    traverse_json(value, current_path, current_depth + 1)
+                elif isinstance(value, list) and value and current_depth < max_depth:
+                    # Analyze first item in list if it exists
+                    list_path = f"{current_path}[0]"
+                    analysis['paths'][list_path] = {
+                        'depth': current_depth + 1,
+                        'data_type': f"list_item_{type(value[0]).__name__}",
+                        'access_code': f"value = {current_path}[0] if {current_path} else None",
+                        'safe_access_code': f"value = {current_path}[0] if isinstance({current_path}, list) and len({current_path}) > 0 else None"
+                    }
+                    if isinstance(value[0], dict):
+                        traverse_json(value[0], list_path, current_depth + 2)
+        
+        elif isinstance(obj, list) and obj:
+            # Handle top-level lists
+            for i, item in enumerate(obj[:3]):  # Only analyze first 3 items
+                item_path = f"{path}[{i}]"
+                if isinstance(item, dict):
+                    traverse_json(item, item_path, current_depth + 1)
+    
+    # Start analysis
+    traverse_json(data)
+    
+    # Generate access patterns documentation
+    analysis['access_patterns'] = [
+        "# Common Access Patterns for JSON Data",
+        "# Replace 'data' with your actual variable name",
+        "",
+        "# Basic access:",
+        "# value = data['key_name']",
+        "",
+        "# Safe access (prevents KeyError):",
+        "# value = data.get('key_name', 'default_value')",
+        "",
+        "# Nested access:",
+        "# value = data['level1']['level2']['level3']",
+        "",
+        "# Safe nested access:",
+        "# value = data.get('level1', {}).get('level2', {}).get('level3', 'default')",
+        "",
+        "# List access:",
+        "# value = data['list_key'][0] if data['list_key'] else None",
+        "",
+        "# Safe list access:",
+        "# value = data.get('list_key', [])[0] if data.get('list_key') else None",
+        ""
+    ]
+    
+    return analysis
+
+
+def save_device_type_analysis(device_type, analysis_data, output_dir):
+    """
+    Save device type analysis to JSON file with comprehensive documentation.
+    
+    Args:
+        device_type (str): Device type name
+        analysis_data (dict): Analysis results from analyze_json_structure
+        output_dir (Path): Analysis output directory
+    """
+    try:
+        analysis_dir = output_dir / "device-type-analysis"
+        analysis_dir.mkdir(exist_ok=True)
+        
+        # Save detailed analysis
+        analysis_file = analysis_dir / f"{device_type}_analysis.json"
+        with open(analysis_file, 'w', encoding='utf-8') as f:
+            json.dump(analysis_data, f, indent=2, ensure_ascii=False)
+        
+        # Save access patterns as text file
+        patterns_file = analysis_dir / f"{device_type}_access_patterns.txt"
+        with open(patterns_file, 'w', encoding='utf-8') as f:
+            f.write(f"# Access Patterns for Device Type: {device_type}\n")
+            f.write(f"# Generated: {analysis_data.get('analysis_timestamp', 'Unknown')}\n")
+            f.write(f"# Total Keys Found: {analysis_data.get('total_keys', 0)}\n")
+            f.write(f"# Max Depth: {analysis_data.get('max_depth_found', 0)}\n\n")
+            
+            # Write general patterns
+            for pattern in analysis_data.get('access_patterns', []):
+                f.write(f"{pattern}\n")
+            
+            f.write("\n# Specific Paths Found in This Device Type:\n\n")
+            
+            # Write specific paths grouped by depth
+            paths_by_depth = defaultdict(list)
+            for path, info in analysis_data.get('paths', {}).items():
+                paths_by_depth[info['depth']].append((path, info))
+            
+            for depth in sorted(paths_by_depth.keys()):
+                f.write(f"## Depth {depth} Fields:\n")
+                for path, info in sorted(paths_by_depth[depth]):
+                    f.write(f"# Path: {path}\n")
+                    f.write(f"# Type: {info['data_type']}\n")
+                    f.write(f"# Access: {info['access_code']}\n")
+                    f.write(f"# Safe:   {info['safe_access_code']}\n")
+                    sample = analysis_data.get('sample_values', {}).get(path, 'No sample')
+                    f.write(f"# Sample: {sample}\n")
+                    f.write("\n")
+                f.write("\n")
+        
+        debug_print(f"Saved analysis for device type '{device_type}' to {analysis_dir}")
+        
+    except Exception as e:
+        print(f"⚠️  Error saving device type analysis for '{device_type}': {e}")
+
+
+def classify_device_type(data):
+    """
+    ================================================================
+    DEVICE TYPE CLASSIFICATION - CUSTOMIZE THIS SECTION
+    TODO: Replace 'device_type' with your actual classification key
+    
+    This is a PLACEHOLDER function that needs to be customized based on
+    your actual JSON structure. Look for a key-value pair that identifies
+    different types of devices in your API responses.
+    
+    Common classification keys to look for:
+    - data.get('device_type')
+    - data.get('product_type') 
+    - data.get('model')
+    - data.get('category')
+    - data.get('class')
+    - data.get('hardware_type')
+    
+    You may need to use nested keys like:
+    - data.get('device_info', {}).get('type')
+    - data.get('system', {}).get('device_type')
+    ================================================================
+    
+    Args:
+        data (dict): JSON data from API response
+    
+    Returns:
+        str: Device type classification
+    """
+    if not isinstance(data, dict):
+        return 'unknown'
+    
+    # ================================================================
+    # PLACEHOLDER CLASSIFICATION LOGIC - CUSTOMIZE THIS!
+    # Replace this with your actual device type identification logic
+    # ================================================================
+    
+    # Example placeholder - customize based on your JSON structure:
+    device_type = data.get('device_type', 'unknown')
+    
+    # You might need something like:
+    # device_type = data.get('product_info', {}).get('type', 'unknown')
+    # OR
+    # device_type = data.get('system', {}).get('hardware_type', 'unknown')
+    # OR
+    # model = data.get('model', '')
+    # if 'router' in model.lower():
+    #     device_type = 'router'
+    # elif 'switch' in model.lower():
+    #     device_type = 'switch'
+    # else:
+    #     device_type = 'unknown'
+    
+    # Normalize device type (lowercase, no spaces)
+    if isinstance(device_type, str):
+        return device_type.lower().replace(' ', '_').replace('-', '_')
+    
+    return 'unknown'
+
+
+def update_device_type_dictionary(device_type):
+    """
+    Update the persistent device type dictionary and modify the script file if needed.
+    Creates backup before modification.
+    
+    Args:
+        device_type (str): Device type to add/update
+    
+    Returns:
+        bool: True if script was modified, False if no changes needed
+    """
+    global DISCOVERED_DEVICE_TYPES
+    
+    current_date = datetime.now().strftime("%Y-%m-%d")
+    
+    # Check if this is a new device type
+    if device_type not in DISCOVERED_DEVICE_TYPES:
+        print(f"🔍 NEW DEVICE TYPE DISCOVERED: '{device_type}'")
+        
+        # Show current state
+        print(f"📊 Current Device Types: {dict(DISCOVERED_DEVICE_TYPES)}")
+        
+        # Add new device type
+        DISCOVERED_DEVICE_TYPES[device_type] = {
+            'count': 1,
+            'first_seen': current_date,
+            'last_seen': current_date
+        }
+        
+        print(f"📦 Updated Device Types: {dict(DISCOVERED_DEVICE_TYPES)}")
+        
+        # Backup and modify script
+        backup_script()
+        modify_script_with_new_device_type()
+        
+        return True
+    else:
+        # Update existing device type
+        DISCOVERED_DEVICE_TYPES[device_type]['count'] += 1
+        DISCOVERED_DEVICE_TYPES[device_type]['last_seen'] = current_date
+        
+        return False
+
+
+def backup_script():
+    """
+    Create a backup of the current script before modification.
+    Adds header comments explaining the backup reason.
+    """
+    try:
+        script_path = Path(__file__)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_path = script_path.parent / f"{script_path.stem}_backup_{timestamp}{script_path.suffix}"
+        
+        # Read current script
+        with open(script_path, 'r', encoding='utf-8') as f:
+            current_content = f.read()
+        
+        # Create backup header
+        backup_header = f'''#!/usr/bin/env python3
+"""
+BACKUP REASON: New device type discovered
+BACKUP TIMESTAMP: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+PREVIOUS DEVICE TYPES: {dict(DISCOVERED_DEVICE_TYPES)}
+BACKUP CREATED BY: Automatic device type discovery system
+
+This is an automatic backup created before script self-modification.
+The original script discovered a new device type and updated itself.
+"""
+
+'''
+        
+        # Write backup with header
+        with open(backup_path, 'w', encoding='utf-8') as f:
+            f.write(backup_header)
+            f.write(current_content)
+        
+        print(f"💾 Script backed up to: {backup_path}")
+        
+    except Exception as e:
+        print(f"⚠️  Error creating backup: {e}")
+
+
+def modify_script_with_new_device_type():
+    """
+    Modify the current script file to update the DISCOVERED_DEVICE_TYPES dictionary.
+    """
+    try:
+        script_path = Path(__file__)
+        
+        # Read current script
+        with open(script_path, 'r', encoding='utf-8') as f:
+            lines = f.readlines()
+        
+        # Find and replace the DISCOVERED_DEVICE_TYPES section
+        new_lines = []
+        in_device_types_section = False
+        section_found = False
+        
+        for line in lines:
+            if 'DISCOVERED_DEVICE_TYPES = {' in line:
+                in_device_types_section = True
+                section_found = True
+                new_lines.append(line)
+                
+                # Write updated dictionary
+                new_lines.append('    # Format: \'device_type\': {\'count\': number, \'last_seen\': \'YYYY-MM-DD\', \'first_seen\': \'YYYY-MM-DD\'}\n')
+                new_lines.append('    # Auto-updated by device discovery system:\n')
+                
+                for device_type, info in DISCOVERED_DEVICE_TYPES.items():
+                    new_lines.append(f"    '{device_type}': {{'count': {info['count']}, 'last_seen': '{info['last_seen']}', 'first_seen': '{info['first_seen']}'}},\n")
+                
+                continue
+            
+            elif in_device_types_section and line.strip() == '}':
+                in_device_types_section = False
+                new_lines.append(line)
+                continue
+            
+            elif not in_device_types_section:
+                new_lines.append(line)
+        
+        if not section_found:
+            print("⚠️  Could not find DISCOVERED_DEVICE_TYPES section in script")
+            return
+        
+        # Write updated script
+        with open(script_path, 'w', encoding='utf-8') as f:
+            f.writelines(new_lines)
+        
+        print(f"✅ Script updated with new device type dictionary")
+        
+    except Exception as e:
+        print(f"⚠️  Error modifying script: {e}")
     """
     Print debug messages only when DEBUG_MODE is enabled.
     
@@ -100,7 +479,8 @@ def read_serial_numbers(file_path):
 def process_all_serials(serial_numbers, base_url, project_name, output_dir):
     """
     Process all serial numbers in a single pass - fetch JSON, categorize ConfigurationIntent,
-    create JSON files, and extract CSV data all at once. No redundant API calls!
+    create JSON files, extract CSV data, and perform device type analysis all at once. 
+    No redundant API calls!
     
     Args:
         serial_numbers (list): List of serial numbers to process
@@ -110,7 +490,7 @@ def process_all_serials(serial_numbers, base_url, project_name, output_dir):
 
     Returns:
         tuple: (all_csv_data, full_extraction_serials, basic_extraction_serials, 
-                successful_api_calls, failed_api_calls)
+                successful_api_calls, failed_api_calls, device_type_stats)
     """
     print("🚀 Processing all serials in single pass (no redundant API calls)...")
     print("=" * 70)
@@ -120,6 +500,10 @@ def process_all_serials(serial_numbers, base_url, project_name, output_dir):
     all_csv_data = []               # Collected CSV data for all serials
     successful_api_calls = 0
     failed_api_calls = 0
+    
+    # Device type analysis tracking
+    device_type_stats = defaultdict(int)
+    device_type_analyses = {}  # Store one analysis per device type
 
     for i, serial_number in enumerate(serial_numbers, 1):
         print(f"[{i}/{len(serial_numbers)}] Processing: {serial_number}")
@@ -129,6 +513,27 @@ def process_all_serials(serial_numbers, base_url, project_name, output_dir):
 
         if data is not None:
             successful_api_calls += 1
+            
+            # ================================================================
+            # DEVICE TYPE DISCOVERY AND ANALYSIS
+            # ================================================================
+            device_type = classify_device_type(data)
+            device_type_stats[device_type] += 1
+            
+            print(f"   📋 Device Type: '{device_type}'")
+            
+            # Update persistent device type dictionary (may modify script)
+            script_modified = update_device_type_dictionary(device_type)
+            if script_modified:
+                print(f"   🔄 Script self-modified to include new device type")
+            
+            # Perform JSON structure analysis (one per device type)
+            if device_type not in device_type_analyses:
+                print(f"   🔍 Analyzing JSON structure for device type '{device_type}'...")
+                analysis = analyze_json_structure(data, device_type)
+                device_type_analyses[device_type] = analysis
+                save_device_type_analysis(device_type, analysis, output_dir)
+                print(f"   📄 Analysis saved for device type '{device_type}'")
             
             # Check ConfigurationIntent status and categorize
             config_intent = data.get('ConfigurationIntent')
@@ -157,11 +562,16 @@ def process_all_serials(serial_numbers, base_url, project_name, output_dir):
             failed_api_calls += 1
             print(f"   ❌ API call failed - using basic extraction with minimal data")
             basic_extraction_serials.append(serial_number)
+            # Default device type for failed API calls
+            device_type = 'api_failure'
+            device_type_stats[device_type] += 1
 
         # Extract CSV data (works whether data is None or valid)
         csv_row = extract_csv_data(serial_number, data, full_extraction_serials)
         
+        # Add device type to CSV data
         if csv_row is not None:
+            csv_row['device_type'] = device_type if 'device_type' in locals() else 'unknown'
             all_csv_data.append(csv_row)
             extraction_type = csv_row.get('extraction_type', 'unknown')
             config_status = csv_row.get('config_status', 'unknown')
@@ -171,6 +581,7 @@ def process_all_serials(serial_numbers, base_url, project_name, output_dir):
             print(f"   🚨 CRITICAL ERROR: CSV extraction returned None")
             emergency_row = {
                 'serial_number': serial_number,
+                'device_type': device_type if 'device_type' in locals() else 'unknown',
                 'config_status': 'CRITICAL_ERROR',
                 'extraction_type': 'emergency_fallback',
                 'data_available': 'false',
@@ -186,6 +597,29 @@ def process_all_serials(serial_numbers, base_url, project_name, output_dir):
     print("📊 PROCESSING SUMMARY:")
     print(f"✅ Full extraction serials: {len(full_extraction_serials)}")
     print(f"➡️ Basic extraction serials: {len(basic_extraction_serials)}")
+    print(f"🎯 Total serials processed: {len(serial_numbers)}")
+    print(f"✅ Successful API calls: {successful_api_calls}")
+    print(f"❌ Failed API calls: {failed_api_calls}")
+    print(f"📊 CSV records created: {len(all_csv_data)}")
+    
+    # Device type summary
+    print(f"\n🔍 DEVICE TYPE DISCOVERY:")
+    for device_type, count in sorted(device_type_stats.items()):
+        print(f"   📋 {device_type}: {count} devices")
+
+    if basic_extraction_serials:
+        print(f"\n➡️ Serials with basic extraction (null/invalid ConfigurationIntent):")
+        for serial in basic_extraction_serials:
+            print(f"   • {serial}")
+
+    if full_extraction_serials:
+        print(f"\n✅ Serials with full extraction (valid ConfigurationIntent):")
+        for serial in full_extraction_serials:
+            print(f"   • {serial}")
+
+    print("=" * 70)
+
+    return all_csv_data, full_extraction_serials, basic_extraction_serials, successful_api_calls, failed_api_calls, device_type_stats Basic extraction serials: {len(basic_extraction_serials)}")
     print(f"🎯 Total serials processed: {len(serial_numbers)}")
     print(f"✅ Successful API calls: {successful_api_calls}")
     print(f"❌ Failed API calls: {failed_api_calls}")
@@ -650,7 +1084,7 @@ def main():
     print(f"🎯 EFFICIENT: One API call per serial (no redundant requests)\n")
 
     # Process ALL serial numbers in a single pass (NO REDUNDANT API CALLS)
-    all_csv_data, full_extraction_serials, basic_extraction_serials, successful_api_calls, failed_api_calls = process_all_serials(
+    all_csv_data, full_extraction_serials, basic_extraction_serials, successful_api_calls, failed_api_calls, device_type_stats = process_all_serials(
         serial_numbers, BASE_URL_TEMPLATE, project_name, output_dir
     )
 
@@ -672,7 +1106,7 @@ def main():
         print("   This should never happen with the fixed logic.")
         print("   Check the extract_csv_data() function for issues.")
 
-    # Enhanced Summary
+    # Enhanced Summary with Device Type Information
     print("=" * 70)
     print("📋 FINAL SUMMARY")
     print("=" * 70)
@@ -712,11 +1146,37 @@ def main():
     for status, count in sorted(status_counts.items()):
         print(f"   {status}: {count}")
 
+    # Device type breakdown
+    print(f"\n🔍 DEVICE TYPE BREAKDOWN:")
+    for device_type, count in sorted(device_type_stats.items()):
+        print(f"   📋 {device_type}: {count} devices")
+
+    # Analysis files created
+    analysis_dir = output_dir / "device-type-analysis"
+    if analysis_dir.exists():
+        analysis_files = list(analysis_dir.glob("*_analysis.json"))
+        pattern_files = list(analysis_dir.glob("*_access_patterns.txt"))
+        print(f"\n📄 DEVICE TYPE ANALYSIS FILES CREATED:")
+        print(f"   📊 Analysis files: {len(analysis_files)}")
+        print(f"   📝 Pattern files: {len(pattern_files)}")
+        print(f"   📁 Analysis directory: {analysis_dir}")
+
+    # Self-modification summary
+    if any(device_type not in ['unknown', 'api_failure'] for device_type in device_type_stats.keys()):
+        print(f"\n🔄 SELF-LEARNING SUMMARY:")
+        print(f"   📦 Total device types in dictionary: {len(DISCOVERED_DEVICE_TYPES)}")
+        print(f"   🆕 Device types discovered this run: {len([dt for dt in device_type_stats.keys() if dt not in ['unknown', 'api_failure']])}")
+        print(f"   💾 Script may have been auto-updated with new device types")
+
     print("=" * 70)
 
     if DEBUG_MODE:
         print("\n🔧 DEBUG MODE was enabled during this run.")
         print("   To reduce console output, set DEBUG_MODE = False in the script.")
+        print("\n🔍 DEVICE TYPE CLASSIFICATION:")
+        print("   📝 Remember to customize the classify_device_type() function")
+        print("   📝 Current classification uses: data.get('device_type', 'unknown')")
+        print("   📝 Check the device-type-analysis files to find better classification keys")
 
 
 if __name__ == "__main__":
