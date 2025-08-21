@@ -337,89 +337,81 @@ def extract_csv_data(serial_number, data, full_extraction_serials):
             return csv_row
 
         # =================================================================
-        # CONDITIONAL EXTRACTION BASED ON CONFIGURATIONINTENT STATUS
+        # EXTRACT ALL ROOT-LEVEL DATA (Always done for every serial)
         # =================================================================
 
         # Get ConfigurationIntent safely
         config_intent = data.get('ConfigurationIntent')
         debug_print(f"ConfigurationIntent type for {serial_number}: {type(config_intent)}")
 
-        if serial_number in full_extraction_serials and config_intent is not None:
-            # FULL EXTRACTION - Valid ConfigurationIntent
-            csv_row['config_status'] = 'Valid_ConfigurationIntent'
-            csv_row['extraction_type'] = 'full'
-
-            print(f"   Using FULL extraction for {serial_number} (valid ConfigurationIntent)")
-            debug_print(f"ConfigurationIntent keys: {list(config_intent.keys()) if isinstance(config_intent, dict) else 'Not a dict'}")
-
-            # CUSTOMIZE THIS SECTION - Add your specific field extractions for valid ConfigurationIntent devices
-            # Safe extraction with null checking
-            if isinstance(config_intent, dict):
-                intent_data = config_intent.get('IntentData', {})
-                debug_print(f"IntentData available: {intent_data is not None}")
-
-                # Add your specific field extractions here
-                # Example:
-                # csv_row.update({
-                #     'your_field_1': intent_data.get('your_field_1', ''),
-                #     'your_field_2': intent_data.get('your_field_2', ''),
-                #     'nested_field': intent_data.get('nested_object', {}).get('nested_field', ''),
-                #     # Add more fields as needed
-                # })
-
-                # Placeholder fields for demonstration
-                csv_row.update({
-                    'intent_data_available': 'true' if intent_data else 'false',
-                    'intent_data_keys_count': len(intent_data) if isinstance(intent_data, dict) else 0
-                })
-
+        # Set config status for tracking
+        if config_intent is None:
+            csv_row['config_status'] = 'Null_ConfigurationIntent'
+        elif not isinstance(config_intent, dict):
+            csv_row['config_status'] = 'Invalid_ConfigurationIntent'
         else:
-            # BASIC EXTRACTION - Null or Invalid ConfigurationIntent
-            if config_intent is None:
-                csv_row['config_status'] = 'Null_ConfigurationIntent'
-                print(f"   Using BASIC extraction for {serial_number} (null ConfigurationIntent)")
-            else:
-                csv_row['config_status'] = 'Invalid_ConfigurationIntent'
-                print(f"   Using BASIC extraction for {serial_number} (invalid ConfigurationIntent)")
-                debug_print(f"ConfigurationIntent type: {type(config_intent)}")
+            csv_row['config_status'] = 'Valid_ConfigurationIntent'
 
-            csv_row['extraction_type'] = 'basic'
+        # CUSTOMIZE THIS SECTION - Extract ALL root-level fields for every device
+        # These fields should exist at the root level regardless of ConfigurationIntent status
+        # Example:
+        # csv_row.update({
+        #     'device_id': data.get('device_id', ''),
+        #     'timestamp': data.get('timestamp', ''),
+        #     'status': data.get('status', ''),
+        #     'device_type': data.get('device_type', ''),
+        #     'last_seen': data.get('last_seen', ''),
+        #     'api_version': data.get('api_version', ''),
+        #     'device_serial': data.get('device_serial', serial_number),
+        #     'response_timestamp': data.get('timestamp', ''),
+        #     'device_status': data.get('status', 'unknown'),
+        #     # Add ALL your root-level fields here
+        # })
 
-            # CUSTOMIZE THIS SECTION - Add basic fields that exist regardless of ConfigurationIntent
-            # These are fields at the root level of the data object
-            # Example:
+        # Placeholder fields for demonstration - replace with your actual fields
+        csv_row.update({
+            'root_keys_available': ', '.join(list(data.keys())[:5]) if isinstance(data, dict) else '',
+            'total_root_keys': len(data) if isinstance(data, dict) else 0,
+            'data_available': 'true',
+            'processing_timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        })
+
+        # =================================================================
+        # EXTRACT CONFIGURATIONINTENT DATA (Only if valid)
+        # =================================================================
+
+        if serial_number in full_extraction_serials and isinstance(config_intent, dict):
+            # ADDITIONAL EXTRACTION - Valid ConfigurationIntent data
+            csv_row['extraction_type'] = 'full'
+            print(f"   Extracting root data + ConfigurationIntent for {serial_number}")
+            debug_print(f"ConfigurationIntent keys: {list(config_intent.keys())}")
+
+            # CUSTOMIZE THIS SECTION - Add ConfigurationIntent specific fields
+            intent_data = config_intent.get('IntentData', {})
+            debug_print(f"IntentData available: {intent_data is not None}")
+
+            # Example ConfigurationIntent extractions:
             # csv_row.update({
-            #     'device_id': data.get('device_id', ''),
-            #     'timestamp': data.get('timestamp', ''),
-            #     'status': data.get('status', ''),
-            #     'device_type': data.get('device_type', ''),
-            #     'last_seen': data.get('last_seen', ''),
-            #     # Add more basic fields as needed
+            #     'intent_field_1': intent_data.get('your_intent_field_1', ''),
+            #     'intent_field_2': intent_data.get('your_intent_field_2', ''),
+            #     'nested_intent_field': intent_data.get('nested_object', {}).get('nested_field', ''),
+            #     'config_version': config_intent.get('version', ''),
+            #     'config_type': config_intent.get('type', ''),
+            #     # Add more ConfigurationIntent fields as needed
             # })
 
             # Placeholder fields for demonstration
             csv_row.update({
-                'root_keys_available': ', '.join(list(data.keys())[:5]) if isinstance(data, dict) else '',
-                'total_root_keys': len(data) if isinstance(data, dict) else 0
+                'intent_data_available': 'true' if intent_data else 'false',
+                'intent_data_keys_count': len(intent_data) if isinstance(intent_data, dict) else 0
             })
 
-        # =================================================================
-        # COMMON FIELDS - Always extracted regardless of ConfigurationIntent status
-        # =================================================================
-
-        # Add fields that should always be extracted for both valid and null devices
-        # These would be fields that exist at the root level for all devices
-        # Example:
-        # csv_row.update({
-        #     'api_version': data.get('api_version', ''),
-        #     'device_serial': data.get('device_serial', serial_number),
-        #     'response_timestamp': data.get('timestamp', ''),
-        #     'device_status': data.get('status', 'unknown')
-        # })
-
-        # Always add data availability indicator
-        csv_row['data_available'] = 'true'
-        csv_row['processing_timestamp'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        else:
+            # NO ADDITIONAL EXTRACTION - Only root-level data
+            csv_row['extraction_type'] = 'basic'
+            print(f"   Extracting root data only for {serial_number} (ConfigurationIntent unavailable)")
+            
+            # No additional fields needed - all root-level data already extracted above
 
         debug_print(f"Successfully extracted CSV data for {serial_number}: {len(csv_row)} fields")
         return csv_row
