@@ -97,97 +97,113 @@ def read_serial_numbers(file_path):
         sys.exit(1)
 
 
-def check_configuration_intent(serial_numbers, base_url):
+def process_all_serials(serial_numbers, base_url, project_name, output_dir):
     """
-    Pre-check all serial numbers for ConfigurationIntent status.
-    Categorizes serials for extraction strategy but DOES NOT skip any.
+    Process all serial numbers in a single pass - fetch JSON, categorize ConfigurationIntent,
+    create JSON files, and extract CSV data all at once. No redundant API calls!
     
     Args:
-        serial_numbers (list): List of serial numbers to check
+        serial_numbers (list): List of serial numbers to process
         base_url (str): Base URL template for API
+        project_name (str): Project name for JSON file headers
+        output_dir (Path): Output directory for JSON files
 
     Returns:
-        tuple: (full_extraction_serials, basic_extraction_serials)
+        tuple: (all_csv_data, full_extraction_serials, basic_extraction_serials, 
+                successful_api_calls, failed_api_calls)
     """
-    print("🔍 Pre-checking all serials for ConfigurationIntent status...")
+    print("🚀 Processing all serials in single pass (no redundant API calls)...")
     print("=" * 70)
 
     full_extraction_serials = []    # Valid ConfigurationIntent - full extraction
     basic_extraction_serials = []   # Null/invalid ConfigurationIntent - basic extraction
+    all_csv_data = []               # Collected CSV data for all serials
+    successful_api_calls = 0
+    failed_api_calls = 0
 
     for i, serial_number in enumerate(serial_numbers, 1):
-        print(f"[{i}/{len(serial_numbers)}] Checking: {serial_number}", end=" ")
+        print(f"[{i}/{len(serial_numbers)}] Processing: {serial_number}")
 
-        url = f"{base_url}{serial_number}"
+        # Fetch JSON data from API
+        data = fetch_json_data(serial_number, base_url)
 
-        try:
-            # Quick API call to check ConfigurationIntent
-            result = subprocess.run([
-                'curl',
-                '-s',  # Silent mode
-                '-L',  # Follow redirects
-                '--max-time', '30',  # 30 second timeout
-                '--fail',  # Fail on HTTP errors
-                '--negotiate',  # Enable SPNEGO/Negotiate authentication (Kerberos/NTLM)
-                '--user', ':',  # Use current user credentials (empty user:pass triggers system auth)
-                '--ntlm',  # Enable NTLM authentication for Windows domains
-                '--anyauth',  # Let curl pick the best auth method available
-                '--insecure',  # Skip SSL certificate verification (for testing)
-                '--ssl-no-revoke',  # Don't check SSL certificate revocation (Windows)
-                '--tlsv1.2',  # Force TLS 1.2 or higher
-                url
-            ], capture_output=True, text=True, check=True, encoding='utf-8')
-
-            # Parse JSON response
-            data = json.loads(result.stdout)
-
-            # Check ConfigurationIntent status
+        if data is not None:
+            successful_api_calls += 1
+            
+            # Check ConfigurationIntent status and categorize
             config_intent = data.get('ConfigurationIntent')
             if config_intent is None:
-                print("➡️ (ConfigurationIntent is null - basic extraction)")
+                print("   ➡️ ConfigurationIntent is null - using basic extraction")
                 basic_extraction_serials.append(serial_number)
             elif not isinstance(config_intent, dict):
-                print(f"➡️ (ConfigurationIntent is {type(config_intent).__name__} - basic extraction)")
+                print(f"   ➡️ ConfigurationIntent is {type(config_intent).__name__} - using basic extraction")
                 basic_extraction_serials.append(serial_number)
             else:
-                print("✅ (Valid ConfigurationIntent - full extraction)")
+                print("   ✅ Valid ConfigurationIntent - using full extraction")
                 full_extraction_serials.append(serial_number)
 
-        except subprocess.CalledProcessError as e:
-            print(f"➡️ (API Error: Status {e.returncode} - basic extraction)")
-            basic_extraction_serials.append(serial_number)
-        except json.JSONDecodeError as e:
-            print("➡️ (Invalid JSON - basic extraction)")
-            basic_extraction_serials.append(serial_number)
-        except Exception as e:
-            print(f"➡️ (Error: {str(e)[:50]}... - basic extraction)")
+            # Display JSON response (if debug mode)
+            if DEBUG_MODE:
+                print("   📄 JSON Response:")
+                print("   " + "-" * 40)
+                for line in json.dumps(data, indent=2, ensure_ascii=False).split('\n'):
+                    print(f"   {line}")
+                print("   " + "-" * 40)
+
+            # Create pretty JSON file
+            create_pretty_json_file(serial_number, data, project_name, output_dir)
+
+        else:
+            failed_api_calls += 1
+            print(f"   ❌ API call failed - using basic extraction with minimal data")
             basic_extraction_serials.append(serial_number)
 
-    # Summary of pre-check
+        # Extract CSV data (works whether data is None or valid)
+        csv_row = extract_csv_data(serial_number, data, full_extraction_serials)
+        
+        if csv_row is not None:
+            all_csv_data.append(csv_row)
+            extraction_type = csv_row.get('extraction_type', 'unknown')
+            config_status = csv_row.get('config_status', 'unknown')
+            print(f"   ✅ CSV data extracted ({extraction_type} extraction, status: {config_status})")
+        else:
+            # Emergency fallback (should never happen with fixed logic)
+            print(f"   🚨 CRITICAL ERROR: CSV extraction returned None")
+            emergency_row = {
+                'serial_number': serial_number,
+                'config_status': 'CRITICAL_ERROR',
+                'extraction_type': 'emergency_fallback',
+                'data_available': 'false',
+                'error_message': 'extract_csv_data returned None'
+            }
+            all_csv_data.append(emergency_row)
+            print(f"   🚨 Added emergency fallback row")
+
+        print()  # Empty line for readability
+
+    # Summary after processing
     print("=" * 70)
-    print("📊 PRE-CHECK SUMMARY:")
+    print("📊 PROCESSING SUMMARY:")
     print(f"✅ Full extraction serials: {len(full_extraction_serials)}")
     print(f"➡️ Basic extraction serials: {len(basic_extraction_serials)}")
-    print(f"🎯 Total serials to process: {len(serial_numbers)} (ALL WILL BE PROCESSED)")
+    print(f"🎯 Total serials processed: {len(serial_numbers)}")
+    print(f"✅ Successful API calls: {successful_api_calls}")
+    print(f"❌ Failed API calls: {failed_api_calls}")
+    print(f"📊 CSV records created: {len(all_csv_data)}")
 
     if basic_extraction_serials:
-        print(f"\n➡️ Serials requiring basic extraction (null/invalid ConfigurationIntent):")
+        print(f"\n➡️ Serials with basic extraction (null/invalid ConfigurationIntent):")
         for serial in basic_extraction_serials:
             print(f"   • {serial}")
-        debug_print(f"Basic extraction will use root-level fields only")
 
     if full_extraction_serials:
-        print(f"\n✅ Serials for full extraction (valid ConfigurationIntent):")
+        print(f"\n✅ Serials with full extraction (valid ConfigurationIntent):")
         for serial in full_extraction_serials:
             print(f"   • {serial}")
-        debug_print(f"Full extraction will use ConfigurationIntent.IntentData fields")
 
-    print(f"\n🚀 ALL {len(serial_numbers)} serials will be processed...")
     print("=" * 70)
-    input("Press Enter to continue with processing ALL serials...")
-    print()
 
-    return full_extraction_serials, basic_extraction_serials
+    return all_csv_data, full_extraction_serials, basic_extraction_serials, successful_api_calls, failed_api_calls
 
 
 def fetch_json_data(serial_number, base_url):
@@ -624,73 +640,19 @@ def main():
     # Read serial numbers and project name
     project_name, serial_numbers = read_serial_numbers(serial_file)
 
-    # Pre-check all serials for ConfigurationIntent status (renamed from "valid/invalid" to "full/basic")
-    full_extraction_serials, basic_extraction_serials = check_configuration_intent(serial_numbers, BASE_URL_TEMPLATE)
-
     # Create output directory in same folder as script
     safe_project_name = "".join(c for c in project_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
     output_dir = script_dir / safe_project_name.replace(' ', '_')
     output_dir.mkdir(exist_ok=True)
 
     print(f"📁 Output directory: {output_dir}")
-    print(f"🚀 Starting JSON processing for ALL {len(serial_numbers)} serial numbers...")
-    print(f"📊 Full extraction: {len(full_extraction_serials)} serials")
-    print(f"📊 Basic extraction: {len(basic_extraction_serials)} serials")
-    print(f"🎯 CRITICAL: ALL {len(serial_numbers)} serials will be included in Excel output\n")
+    print(f"🚀 Starting single-pass processing for ALL {len(serial_numbers)} serial numbers...")
+    print(f"🎯 EFFICIENT: One API call per serial (no redundant requests)\n")
 
-    # Process ALL serial numbers (NO SKIPPING)
-    all_csv_data = []
-    successful_api_calls = 0
-    failed_api_calls = 0
-
-    for i, serial_number in enumerate(serial_numbers, 1):
-        print(f"[{i}/{len(serial_numbers)}] Processing: {serial_number}")
-
-        # Always fetch JSON data for every serial
-        data = fetch_json_data(serial_number, BASE_URL_TEMPLATE)
-
-        if data is not None:
-            successful_api_calls += 1
-            
-            # Always print pretty JSON to terminal (unless debug mode is off)
-            if DEBUG_MODE:
-                print("📄 JSON Response:")
-                print("-" * 40)
-                print(json.dumps(data, indent=2, ensure_ascii=False))
-                print("-" * 40)
-
-            # Always create pretty JSON file
-            create_pretty_json_file(serial_number, data, project_name, output_dir)
-
-        else:
-            failed_api_calls += 1
-            print(f"⚠️  API call failed for {serial_number}, but CSV extraction will still proceed")
-
-        # CRITICAL: Extract CSV data for ALL serials (even if API failed)
-        # The extract_csv_data function handles None data gracefully
-        csv_row = extract_csv_data(serial_number, data, full_extraction_serials)
-        
-        # csv_row should NEVER be None after the fix
-        if csv_row is not None:
-            all_csv_data.append(csv_row)
-            extraction_type = csv_row.get('extraction_type', 'unknown')
-            config_status = csv_row.get('config_status', 'unknown')
-            print(f"✅ CSV data extracted for {serial_number} ({extraction_type} extraction, status: {config_status})")
-        else:
-            # This should never happen with the fixed code, but just in case...
-            print(f"❌ CRITICAL ERROR: CSV extraction returned None for {serial_number}")
-            # Create emergency fallback row
-            emergency_row = {
-                'serial_number': serial_number,
-                'config_status': 'CRITICAL_ERROR',
-                'extraction_type': 'emergency_fallback',
-                'data_available': 'false',
-                'error_message': 'extract_csv_data returned None'
-            }
-            all_csv_data.append(emergency_row)
-            print(f"🚨 Added emergency fallback row for {serial_number}")
-
-        print()  # Empty line for readability
+    # Process ALL serial numbers in a single pass (NO REDUNDANT API CALLS)
+    all_csv_data, full_extraction_serials, basic_extraction_serials, successful_api_calls, failed_api_calls = process_all_serials(
+        serial_numbers, BASE_URL_TEMPLATE, project_name, output_dir
+    )
 
     # Create consolidated Excel file (or CSV as fallback)
     print(f"\n📊 Creating consolidated output file...")
