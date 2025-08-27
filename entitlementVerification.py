@@ -403,3 +403,52 @@ if __name__ == "__main__":
         print("2. Data contains valid entries")
         print("3. No special characters causing issues")
         sys.exit(1)
+
+
+
+
+
+
+Option Explicit
+
+' Module-level variable to store the previously highlighted row
+Private PreviousRow As Long
+
+' This subroutine runs whenever the selection changes in the worksheet
+Private Sub Worksheet_SelectionChange(ByVal Target As Range)
+    
+    ' Exit if multiple cells are selected to avoid issues
+    If Target.Cells.Count > 1 Then Exit Sub
+    
+    ' Clear highlighting from the previous row (if any)
+    If PreviousRow > 0 Then
+        With Rows(PreviousRow).Interior
+            .ColorIndex = xlNone ' Remove background color
+            .Pattern = xlNone
+        End With
+    End If
+    
+    ' Highlight the current row
+    With Target.EntireRow.Interior
+        .Color = RGB(255, 255, 200) ' Light yellow highlight
+        .Pattern = xlSolid
+    End With
+    
+    ' Store the current row number for next time
+    PreviousRow = Target.Row
+    
+End Sub
+
+' Optional: Add this to clear highlighting when leaving the worksheet
+Private Sub Worksheet_Deactivate()
+    
+    ' Clear highlighting when switching to another worksheet
+    If PreviousRow > 0 Then
+        With Rows(PreviousRow).Interior
+            .ColorIndex = xlNone
+            .Pattern = xlNone
+        End With
+        PreviousRow = 0
+    End If
+    
+End Sub
