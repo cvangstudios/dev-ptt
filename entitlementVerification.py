@@ -3,6 +3,8 @@ import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment
 from openpyxl.utils.dataframe import dataframe_to_rows
 import sys
+import os
+from datetime import datetime
 from collections import defaultdict
 
 def analyze_entitlements(input_file):
@@ -287,8 +289,20 @@ def analyze_entitlements(input_file):
                     max_length = max(max_length, len(str(cell.value)))
         ws_matrix.column_dimensions[col_letter].width = min(max_length + 2, 30)
     
-    # Save the workbook
+    # Save the workbook with backup handling
     output_file = "entitlement_analysis.xlsx"
+    
+    # Check if output file already exists and backup if needed
+    if os.path.exists(output_file):
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_file = f"entitlement_analysis.old.{timestamp}.xlsx"
+        try:
+            os.rename(output_file, backup_file)
+            print(f"Previous analysis backed up as: {backup_file}")
+        except Exception as e:
+            print(f"Warning: Could not backup existing file: {e}")
+            print("Proceeding to overwrite existing file...")
+    
     wb.save(output_file)
     
     print(f"\nAnalysis complete! Results saved to: {output_file}")
@@ -310,15 +324,82 @@ def analyze_entitlements(input_file):
 if __name__ == "__main__":
     input_file = "entitlements.xlsx"
     
+    # Check if input file exists
+    if not os.path.exists(input_file):
+        print("="*60)
+        print("ERROR: Input file not found!")
+        print("="*60)
+        print(f"The script is looking for: '{input_file}'")
+        print(f"Current directory: {os.getcwd()}")
+        print("\nPlease ensure the following:")
+        print("1. The file 'entitlements.xlsx' exists in the same folder as this script")
+        print("2. The file name is spelled correctly (case-sensitive)")
+        print("3. The file is not open in Excel (close it if open)")
+        print("\nExiting...")
+        sys.exit(1)
+    
+    # Check file permissions
+    if not os.access(input_file, os.R_OK):
+        print("="*60)
+        print("ERROR: Cannot read input file!")
+        print("="*60)
+        print(f"File '{input_file}' exists but cannot be read.")
+        print("Please check file permissions and ensure it's not open in Excel.")
+        print("\nExiting...")
+        sys.exit(1)
+    
     try:
+        print("="*60)
+        print("ENTITLEMENT ANALYSIS STARTING")
+        print("="*60)
+        print(f"Input file: {input_file}")
+        print(f"Current time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        print()
+        
         results = analyze_entitlements(input_file)
-        print("\nAnalysis completed successfully!")
+        
+        print("="*60)
+        print("ANALYSIS COMPLETED SUCCESSFULLY!")
+        print("="*60)
         
     except FileNotFoundError:
-        print(f"Error: File '{input_file}' not found in the current directory.")
-        print("Please ensure 'entitlements.xlsx' is in the same folder as this script.")
+        print("="*60)
+        print("ERROR: File not found during processing!")
+        print("="*60)
+        print(f"Could not find '{input_file}' during analysis.")
+        print("The file may have been moved or deleted while processing.")
+        sys.exit(1)
+        
+    except PermissionError:
+        print("="*60)
+        print("ERROR: Permission denied!")
+        print("="*60)
+        print("Cannot access the file. Please check:")
+        print("1. File is not open in Excel")
+        print("2. You have read/write permissions")
+        print("3. File is not locked by another process")
+        sys.exit(1)
+        
+    except pd.errors.EmptyDataError:
+        print("="*60)
+        print("ERROR: Empty or invalid Excel file!")
+        print("="*60)
+        print(f"The file '{input_file}' appears to be empty or corrupted.")
+        print("Please check that it contains valid data with:")
+        print("1. People names in the first row")
+        print("2. Entitlements in the rows below")
+        sys.exit(1)
         
     except Exception as e:
-        print(f"Error during analysis: {str(e)}")
+        print("="*60)
+        print("ERROR: Unexpected error during analysis!")
+        print("="*60)
+        print(f"Error details: {str(e)}")
+        print("\nFull error traceback:")
         import traceback
         traceback.print_exc()
+        print("\nIf this error persists, please check:")
+        print("1. Excel file format and structure")
+        print("2. Data contains valid entries")
+        print("3. No special characters causing issues")
+        sys.exit(1)
