@@ -256,9 +256,16 @@ def analyze_entitlements(input_file):
     ws_matrix.cell(2, len(people) + 2, "Total Count").font = subheader_font
     ws_matrix.cell(2, len(people) + 2).fill = subheader_fill
     
-    # Write matrix data
-    sorted_entitlements = sorted(list(all_entitlements))
-    for row_idx, entitlement in enumerate(sorted_entitlements, 3):
+    # Write matrix data - sort by count (least to most people who have it)
+    entitlement_counts = []
+    for entitlement in all_entitlements:
+        count = sum(1 for person in people if entitlement in person_entitlements[person])
+        entitlement_counts.append((entitlement, count))
+    
+    # Sort by count (ascending), then alphabetically for ties
+    entitlement_counts.sort(key=lambda x: (x[1], x[0]))
+    
+    for row_idx, (entitlement, _) in enumerate(entitlement_counts, 3):
         ws_matrix.cell(row_idx, 1, entitlement)
         
         count = 0
