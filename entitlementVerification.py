@@ -124,9 +124,13 @@ def analyze_entitlements(input_file):
                 cell.fill = subheader_fill
     
     # Auto-adjust column width
-    for col in ws_summary.columns:
-        max_length = max(len(str(cell.value or "")) for cell in col)
-        ws_summary.column_dimensions[col[0].column_letter].width = min(max_length + 2, 50)
+    for col_letter in ['A', 'B']:
+        max_length = 0
+        for row in ws_summary.iter_rows(min_col=ord(col_letter)-64, max_col=ord(col_letter)-64):
+            for cell in row:
+                if hasattr(cell, 'value') and cell.value:
+                    max_length = max(max_length, len(str(cell.value)))
+        ws_summary.column_dimensions[col_letter].width = min(max_length + 2, 50)
     
     # Sheet 2: Common Entitlements
     ws_common = wb.create_sheet("Common Entitlements")
@@ -145,9 +149,13 @@ def analyze_entitlements(input_file):
         ws_common.cell(idx, 2, len(people))
     
     # Auto-adjust column width
-    for col in ws_common.columns:
-        max_length = max(len(str(cell.value or "")) for cell in col)
-        ws_common.column_dimensions[col[0].column_letter].width = min(max_length + 2, 50)
+    for col_letter in ['A', 'B']:
+        max_length = 0
+        for row in ws_common.iter_rows(min_col=ord(col_letter)-64, max_col=ord(col_letter)-64):
+            for cell in row:
+                if hasattr(cell, 'value') and cell.value:
+                    max_length = max(max_length, len(str(cell.value)))
+        ws_common.column_dimensions[col_letter].width = min(max_length + 2, 50)
     
     # Sheet 3: Different Entitlements
     ws_different = wb.create_sheet("Different Entitlements")
@@ -177,9 +185,15 @@ def analyze_entitlements(input_file):
                 ws_different.cell(row_idx + 3, col_idx, different_entitlements[person][row_idx])
     
     # Auto-adjust column width
-    for col in ws_different.columns:
-        max_length = max(len(str(cell.value or "")) for cell in col)
-        ws_different.column_dimensions[col[0].column_letter].width = min(max_length + 2, 30)
+    max_col_letter = chr(65 + len(people))
+    for i in range(len(people) + 1):
+        col_letter = chr(65 + i)
+        max_length = 0
+        for row in ws_different.iter_rows(min_col=i+1, max_col=i+1):
+            for cell in row:
+                if hasattr(cell, 'value') and cell.value:
+                    max_length = max(max_length, len(str(cell.value)))
+        ws_different.column_dimensions[col_letter].width = min(max_length + 2, 30)
     
     # Sheet 4: Exclusive Entitlements
     ws_exclusive = wb.create_sheet("Exclusive Entitlements")
@@ -213,9 +227,14 @@ def analyze_entitlements(input_file):
         ws_exclusive.merge_cells(f'A3:{chr(65 + len(people))}3')
     
     # Auto-adjust column width
-    for col in ws_exclusive.columns:
-        max_length = max(len(str(cell.value or "")) for cell in col)
-        ws_exclusive.column_dimensions[col[0].column_letter].width = min(max_length + 2, 30)
+    for i in range(len(people) + 1):
+        col_letter = chr(65 + i)
+        max_length = 0
+        for row in ws_exclusive.iter_rows(min_col=i+1, max_col=i+1):
+            for cell in row:
+                if hasattr(cell, 'value') and cell.value:
+                    max_length = max(max_length, len(str(cell.value)))
+        ws_exclusive.column_dimensions[col_letter].width = min(max_length + 2, 30)
     
     # Sheet 5: Complete Matrix
     ws_matrix = wb.create_sheet("Complete Matrix")
@@ -252,9 +271,14 @@ def analyze_entitlements(input_file):
         ws_matrix.cell(row_idx, len(people) + 2, count)
     
     # Auto-adjust column width
-    for col in ws_matrix.columns:
-        max_length = max(len(str(cell.value or "")) for cell in col)
-        ws_matrix.column_dimensions[col[0].column_letter].width = min(max_length + 2, 30)
+    for i in range(len(people) + 2):
+        col_letter = chr(65 + i)
+        max_length = 0
+        for row in ws_matrix.iter_rows(min_col=i+1, max_col=i+1):
+            for cell in row:
+                if hasattr(cell, 'value') and cell.value:
+                    max_length = max(max_length, len(str(cell.value)))
+        ws_matrix.column_dimensions[col_letter].width = min(max_length + 2, 30)
     
     # Save the workbook
     output_file = "entitlement_analysis.xlsx"
