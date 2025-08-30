@@ -1,0 +1,100 @@
+Sub DuplicateTemplateWorksheet()
+    Dim wsTemplate As Worksheet
+    Dim newWorksheetName As String
+    Dim ws As Worksheet
+    Dim nameExists As Boolean
+    
+    ' Error handling
+    On Error GoTo ErrorHandler
+    
+    ' Check if active cell is empty
+    If Trim(ActiveCell.Value) = "" Then
+        MsgBox "The active cell is empty. Please select a cell with a valid name.", _
+               vbExclamation, "Empty Cell"
+        Exit Sub
+    End If
+    
+    ' Get the value from the active cell for the new worksheet name
+    newWorksheetName = Trim(ActiveCell.Value)
+    
+    ' Validate worksheet name for illegal characters
+    Dim invalidChars As Variant
+    Dim i As Integer
+    invalidChars = Array("/", "\", "?", "*", "[", "]", ":")
+    
+    For i = 0 To UBound(invalidChars)
+        If InStr(newWorksheetName, invalidChars(i)) > 0 Then
+            MsgBox "The worksheet name contains invalid character: " & invalidChars(i) & _
+                   vbCrLf & "Please remove invalid characters: / \ ? * [ ] :", _
+                   vbExclamation, "Invalid Character"
+            Exit Sub
+        End If
+    Next i
+    
+    ' Check if name is too long (Excel limit is 31 characters)
+    If Len(newWorksheetName) > 31 Then
+        MsgBox "Worksheet name cannot exceed 31 characters." & vbCrLf & _
+               "Current length: " & Len(newWorksheetName) & " characters", _
+               vbExclamation, "Name Too Long"
+        Exit Sub
+    End If
+    
+    ' Check if "template" worksheet exists
+    On Error Resume Next
+    Set wsTemplate = ThisWorkbook.Worksheets("template")
+    On Error GoTo ErrorHandler
+    
+    If wsTemplate Is Nothing Then
+        MsgBox "The 'template' worksheet does not exist in this workbook.", _
+               vbCritical, "Template Not Found"
+        Exit Sub
+    End If
+    
+    ' Check if a worksheet with the new name already exists
+    nameExists = False
+    For Each ws In ThisWorkbook.Worksheets
+        If LCase(ws.Name) = LCase(newWorksheetName) Then
+            nameExists = True
+            Exit For
+        End If
+    Next ws
+    
+    If nameExists Then
+        MsgBox "A worksheet with the name '" & newWorksheetName & _
+               "' already exists." & vbCrLf & _
+               "Please choose a different name.", _
+               vbExclamation, "Duplicate Name"
+        Exit Sub
+    End If
+    
+    ' If all checks pass, duplicate the template worksheet
+    wsTemplate.Copy After:=ThisWorkbook.Worksheets(ThisWorkbook.Worksheets.Count)
+    
+    ' Rename the newly created worksheet
+    ActiveSheet.Name = newWorksheetName
+    
+    ' Optional: Add timestamp to the Date Created column in the source table
+    ' This assumes the Date Created column is next to the Template Name column
+    Dim sourceCell As Range
+    Set sourceCell = ActiveCell
+    
+    ' Check if there's a cell to the right (Date Created column)
+    If sourceCell.Column < ThisWorkbook.ActiveSheet.Columns.Count Then
+        sourceCell.Offset(0, 1).Value = Now()
+        sourceCell.Offset(0, 1).NumberFormat = "mm/dd/yyyy hh:mm:ss"
+    End If
+    
+    ' Success message
+    MsgBox "Successfully created new worksheet: '" & newWorksheetName & "'", _
+           vbInformation, "Success"
+    
+    ' Optional: Activate the new worksheet
+    ThisWorkbook.Worksheets(newWorksheetName).Activate
+    
+    Exit Sub
+    
+ErrorHandler:
+    MsgBox "An error occurred: " & Err.Description & vbCrLf & _
+           "Error Number: " & Err.Number, _
+           vbCritical, "Error"
+End Sub
