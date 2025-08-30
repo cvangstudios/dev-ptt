@@ -3,19 +3,59 @@ Sub DuplicateTemplateWorksheet()
     Dim newWorksheetName As String
     Dim ws As Worksheet
     Dim nameExists As Boolean
+    Dim tbl As ListObject
+    Dim activeRow As ListRow
     
     ' Error handling
     On Error GoTo ErrorHandler
     
-    ' Check if active cell is empty
-    If Trim(ActiveCell.Value) = "" Then
-        MsgBox "The active cell is empty. Please select a cell with a valid name.", _
-               vbExclamation, "Empty Cell"
+    ' ============================================
+    ' CHANGE THIS TO YOUR ACTUAL TABLE NAME
+    ' ============================================
+    Const TABLE_NAME As String = "TemplateTable"
+    
+    ' Find the table in the workbook
+    Dim foundTable As Boolean
+    foundTable = False
+    
+    For Each ws In ThisWorkbook.Worksheets
+        For Each tbl In ws.ListObjects
+            If tbl.Name = TABLE_NAME Then
+                Set tbl = ws.ListObjects(TABLE_NAME)
+                foundTable = True
+                Exit For
+            End If
+        Next tbl
+        If foundTable Then Exit For
+    Next ws
+    
+    If Not foundTable Then
+        MsgBox "Table '" & TABLE_NAME & "' not found in the workbook." & vbCrLf & _
+               "Please update the TABLE_NAME constant in the VBA code.", _
+               vbCritical, "Table Not Found"
         Exit Sub
     End If
     
-    ' Get the value from the active cell for the new worksheet name
-    newWorksheetName = Trim(ActiveCell.Value)
+    ' Check if active cell is within the table
+    On Error Resume Next
+    Set activeRow = tbl.ListRows(ActiveCell.Row - tbl.HeaderRowRange.Row)
+    On Error GoTo ErrorHandler
+    
+    If activeRow Is Nothing Then
+        MsgBox "Please select a cell within the '" & TABLE_NAME & "' table.", _
+               vbExclamation, "Selection Outside Table"
+        Exit Sub
+    End If
+    
+    ' Get the template name from the Template Name column (first column)
+    newWorksheetName = Trim(activeRow.Range(1).Value)
+    
+    ' Check if template name is empty
+    If newWorksheetName = "" Then
+        MsgBox "The Template Name cell is empty. Please enter a valid name.", _
+               vbExclamation, "Empty Template Name"
+        Exit Sub
+    End If
     
     ' Validate worksheet name for illegal characters
     Dim invalidChars As Variant
@@ -67,25 +107,19 @@ Sub DuplicateTemplateWorksheet()
         Exit Sub
     End If
     
-    ' If all checks pass, duplicate the template worksheet
+    ' Update the Date Created column (second column) BEFORE duplicating
+    activeRow.Range(2).Value = Now()
+    activeRow.Range(2).NumberFormat = "mm/dd/yyyy hh:mm:ss"
+    
+    ' Duplicate the template worksheet
     wsTemplate.Copy After:=ThisWorkbook.Worksheets(ThisWorkbook.Worksheets.Count)
     
     ' Rename the newly created worksheet
     ActiveSheet.Name = newWorksheetName
     
-    ' Optional: Add timestamp to the Date Created column in the source table
-    ' This assumes the Date Created column is next to the Template Name column
-    Dim sourceCell As Range
-    Set sourceCell = ActiveCell
-    
-    ' Check if there's a cell to the right (Date Created column)
-    If sourceCell.Column < ThisWorkbook.ActiveSheet.Columns.Count Then
-        sourceCell.Offset(0, 1).Value = Now()
-        sourceCell.Offset(0, 1).NumberFormat = "mm/dd/yyyy hh:mm:ss"
-    End If
-    
     ' Success message
-    MsgBox "Successfully created new worksheet: '" & newWorksheetName & "'", _
+    MsgBox "Successfully created new worksheet: '" & newWorksheetName & "'" & vbCrLf & _
+           "Timestamp added: " & Format(Now(), "mm/dd/yyyy hh:mm:ss"), _
            vbInformation, "Success"
     
     ' Optional: Activate the new worksheet
