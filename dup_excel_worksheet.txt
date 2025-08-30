@@ -117,13 +117,22 @@ Sub DuplicateTemplateWorksheet()
     ' Rename the newly created worksheet
     ActiveSheet.Name = newWorksheetName
     
+    ' Force the tab color to yellow (clear any existing color first)
+    Dim newSheet As Worksheet
+    Set newSheet = ThisWorkbook.Worksheets(newWorksheetName)
+    
+    ' Clear the color theme first, then set to yellow
+    newSheet.Tab.ColorIndex = xlColorIndexNone
+    DoEvents ' Allow Excel to process the change
+    newSheet.Tab.Color = 65535 ' Yellow using color value instead of RGB
+    
+    ' Activate the new worksheet
+    newSheet.Activate
+    
     ' Success message
     MsgBox "Successfully created new worksheet: '" & newWorksheetName & "'" & vbCrLf & _
            "Timestamp added: " & Format(Now(), "mm/dd/yyyy hh:mm:ss"), _
            vbInformation, "Success"
-    
-    ' Optional: Activate the new worksheet
-    ThisWorkbook.Worksheets(newWorksheetName).Activate
     
     Exit Sub
     
