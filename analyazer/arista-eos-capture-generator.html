@@ -1,0 +1,2107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Arista EOS Packet Capture Generator</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #ee7724 0%, #d8363a 50%, #b44593 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1600px;
+            margin: 0 auto;
+        }
+        
+        header {
+            text-align: center;
+            color: white;
+            margin-bottom: 30px;
+            animation: fadeInDown 0.8s ease;
+        }
+        
+        h1 {
+            font-size: 2.8em;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 15px;
+        }
+        
+        .arista-logo {
+            font-size: 1em;
+        }
+        
+        .subtitle {
+            font-size: 1.2em;
+            opacity: 0.95;
+        }
+        
+        .main-panel {
+            background: white;
+            border-radius: 20px;
+            padding: 30px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            animation: fadeInUp 0.8s ease;
+        }
+        
+        .tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 30px;
+            border-bottom: 2px solid #e0e0e0;
+            flex-wrap: wrap;
+        }
+        
+        .tab {
+            padding: 12px 24px;
+            background: none;
+            border: none;
+            color: #666;
+            font-size: 16px;
+            cursor: pointer;
+            position: relative;
+            transition: all 0.3s ease;
+        }
+        
+        .tab:hover {
+            color: #ee7724;
+        }
+        
+        .tab.active {
+            color: #ee7724;
+            font-weight: 600;
+        }
+        
+        .tab.active::after {
+            content: '';
+            position: absolute;
+            bottom: -2px;
+            left: 0;
+            right: 0;
+            height: 3px;
+            background: linear-gradient(90deg, #ee7724, #d8363a);
+            animation: slideIn 0.3s ease;
+        }
+        
+        .switch-tool {
+            margin-left: auto;
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            color: white;
+        }
+        
+        .switch-wireshark {
+            background: linear-gradient(135deg, #00b4d8, #0077be);
+            color: white;
+        }
+        
+        @keyframes slideIn {
+            from { width: 0; }
+            to { width: 100%; }
+        }
+        
+        .tab-content {
+            display: none;
+        }
+        
+        .tab-content.active {
+            display: block;
+            animation: fadeIn 0.5s ease;
+        }
+        
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        @keyframes fadeInDown {
+            from { opacity: 0; transform: translateY(-20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        @keyframes fadeInUp {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        .quick-filters {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+        
+        .quick-filter-btn {
+            padding: 8px 16px;
+            background: linear-gradient(135deg, #f0f0f0, #e0e0e0);
+            border: 1px solid #ccc;
+            border-radius: 20px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-size: 14px;
+        }
+        
+        .quick-filter-btn:hover {
+            background: linear-gradient(135deg, #ee7724, #d8363a);
+            color: white;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(238, 119, 36, 0.3);
+        }
+        
+        .quick-filter-btn.active {
+            background: linear-gradient(135deg, #ee7724, #d8363a);
+            color: white;
+        }
+        
+        .form-section {
+            margin-bottom: 25px;
+        }
+        
+        .form-section h3 {
+            color: #333;
+            margin-bottom: 15px;
+            padding-left: 10px;
+            border-left: 4px solid #ee7724;
+        }
+        
+        .form-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+        }
+        
+        .form-group {
+            display: flex;
+            flex-direction: column;
+        }
+        
+        label {
+            font-weight: 500;
+            color: #555;
+            margin-bottom: 8px;
+            font-size: 14px;
+        }
+        
+        input, select, textarea {
+            padding: 10px 15px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: all 0.3s ease;
+        }
+        
+        input:focus, select:focus, textarea:focus {
+            outline: none;
+            border-color: #ee7724;
+            box-shadow: 0 0 0 3px rgba(238, 119, 36, 0.1);
+        }
+        
+        select {
+            cursor: pointer;
+        }
+        
+        .checkbox-group {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-top: 5px;
+            flex-wrap: wrap;
+        }
+        
+        .checkbox-group input[type="checkbox"] {
+            width: 20px;
+            height: 20px;
+            cursor: pointer;
+        }
+        
+        .button-group {
+            display: flex;
+            gap: 15px;
+            margin-top: 30px;
+            flex-wrap: wrap;
+        }
+        
+        button {
+            padding: 12px 30px;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, #ee7724, #d8363a);
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(238, 119, 36, 0.3);
+        }
+        
+        .btn-secondary {
+            background: #f5f5f5;
+            color: #666;
+        }
+        
+        .btn-secondary:hover {
+            background: #e0e0e0;
+        }
+        
+        .output-section {
+            margin-top: 30px;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 12px;
+            border: 2px solid #e0e0e0;
+        }
+        
+        .output-section h3 {
+            color: #333;
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .command-output {
+            background: #1e1e1e;
+            color: #00ff00;
+            padding: 20px;
+            border-radius: 8px;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            line-height: 1.6;
+            overflow-x: auto;
+            min-height: 60px;
+            box-shadow: inset 0 2px 4px rgba(0,0,0,0.2);
+        }
+        
+        .copy-btn {
+            padding: 8px 16px;
+            background: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.3s ease;
+        }
+        
+        .copy-btn:hover {
+            background: #45a049;
+            transform: translateY(-1px);
+        }
+        
+        .copy-btn.copied {
+            background: #2196F3;
+        }
+        
+        .info-box {
+            background: #e3f2fd;
+            border-left: 4px solid #2196F3;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 4px;
+        }
+        
+        .info-box.warning {
+            background: #fff3e0;
+            border-left-color: #ff9800;
+        }
+        
+        .info-box.success {
+            background: #e8f5e9;
+            border-left-color: #4caf50;
+        }
+        
+        .info-box.error {
+            background: #ffebee;
+            border-left-color: #f44336;
+        }
+        
+        .info-box h4 {
+            color: #1976d2;
+            margin-bottom: 10px;
+        }
+        
+        .info-box.warning h4 {
+            color: #f57c00;
+        }
+        
+        .info-box.success h4 {
+            color: #388e3c;
+        }
+        
+        .info-box.error h4 {
+            color: #c62828;
+        }
+        
+        .info-box ul {
+            margin-left: 20px;
+            color: #555;
+        }
+        
+        .scenario-card {
+            background: linear-gradient(135deg, #f5f5f5 0%, #e0e0e0 100%);
+            border: 2px solid #ddd;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 15px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        
+        .scenario-card:hover {
+            border-color: #ee7724;
+            box-shadow: 0 8px 20px rgba(238, 119, 36, 0.2);
+            transform: translateY(-3px);
+        }
+        
+        .scenario-card h4 {
+            color: #ee7724;
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .template-card {
+            background: white;
+            border: 2px solid #e0e0e0;
+            border-radius: 10px;
+            padding: 15px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        
+        .template-card:hover {
+            border-color: #ee7724;
+            box-shadow: 0 5px 15px rgba(238, 119, 36, 0.2);
+            transform: translateY(-2px);
+        }
+        
+        .template-card h4 {
+            color: #ee7724;
+            margin-bottom: 8px;
+        }
+        
+        .template-card p {
+            color: #666;
+            font-size: 14px;
+            margin-bottom: 10px;
+        }
+        
+        .template-card code {
+            background: #f5f5f5;
+            padding: 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            display: block;
+            overflow-x: auto;
+        }
+        
+        .filter-templates {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 15px;
+            margin-top: 20px;
+        }
+        
+        .visual-builder {
+            background: #f9f9f9;
+            border: 2px solid #e0e0e0;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        
+        .filter-condition {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 10px;
+            align-items: center;
+            padding: 10px;
+            background: white;
+            border-radius: 8px;
+            border: 1px solid #ddd;
+            flex-wrap: wrap;
+        }
+        
+        .filter-condition select, .filter-condition input {
+            flex: 1;
+            min-width: 150px;
+            padding: 8px 12px;
+            border: 1px solid #e0e0e0;
+            border-radius: 6px;
+        }
+        
+        .add-condition-btn {
+            padding: 10px 20px;
+            background: linear-gradient(135deg, #ee7724, #d8363a);
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            transition: all 0.3s ease;
+        }
+        
+        .add-condition-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(238, 119, 36, 0.3);
+        }
+        
+        .remove-condition-btn {
+            padding: 8px 12px;
+            background: #dc3545;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: bold;
+        }
+        
+        .remove-condition-btn:hover {
+            background: #c82333;
+        }
+        
+        .help-section {
+            margin-bottom: 30px;
+        }
+        
+        .help-section h3 {
+            color: #ee7724;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #e0e0e0;
+        }
+        
+        .help-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin-top: 20px;
+        }
+        
+        .help-card {
+            background: #f9f9f9;
+            border: 1px solid #e0e0e0;
+            border-radius: 8px;
+            padding: 15px;
+        }
+        
+        .help-card h4 {
+            color: #333;
+            margin-bottom: 10px;
+        }
+        
+        .help-card p {
+            color: #666;
+            font-size: 14px;
+            line-height: 1.6;
+        }
+        
+        .protocol-category {
+            margin-bottom: 20px;
+        }
+        
+        .protocol-category h4 {
+            color: #ee7724;
+            margin-bottom: 10px;
+            padding: 10px;
+            background: #f0f0f0;
+            border-radius: 6px;
+        }
+        
+        code {
+            background: #f5f5f5;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+        }
+        
+        .advanced-options {
+            background: #f9f9f9;
+            border: 1px solid #e0e0e0;
+            border-radius: 8px;
+            padding: 20px;
+            margin-top: 20px;
+        }
+        
+        @media (max-width: 768px) {
+            .form-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .button-group {
+                flex-direction: column;
+            }
+            
+            button {
+                width: 100%;
+            }
+            
+            .tabs {
+                overflow-x: auto;
+            }
+            
+            .filter-condition {
+                flex-direction: column;
+            }
+            
+            .filter-condition select, .filter-condition input {
+                width: 100%;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1><span class="arista-logo">🔷</span> Arista EOS Packet Capture Generator <span class="arista-logo">🔷</span></h1>
+            <p class="subtitle">Professional tcpdump command builder for Arista EOS switches - Control & Data Plane Capture</p>
+        </header>
+        
+        <div class="main-panel">
+            <div class="tabs">
+                <button class="tab active" onclick="switchTab('generator')">Capture Generator</button>
+                <button class="tab" onclick="switchTab('visual')">Visual Builder</button>
+                <button class="tab" onclick="switchTab('monitor')">Monitor Sessions</button>
+                <button class="tab" onclick="switchTab('scenarios')">Scenarios</button>
+                <button class="tab" onclick="switchTab('templates')">Templates</button>
+                <button class="tab" onclick="switchTab('reference')">Reference</button>
+                <button class="tab" onclick="switchTab('help')">📚 Help</button>
+                <button class="tab switch-tool" onclick="window.open('ethanalyzer-generator.html', '_blank')">🔄 Switch to NX-OS</button>
+                <button class="tab switch-wireshark" onclick="window.open('wireshark-generator.html', '_blank')">🔄 Wireshark</button>
+            </div>
+            
+            <!-- Capture Generator Tab -->
+            <div id="generator" class="tab-content active">
+                <!-- Quick Filter Buttons -->
+                <div class="quick-filters">
+                    <button class="quick-filter-btn" onclick="applyQuickFilter('tcp')">TCP Traffic</button>
+                    <button class="quick-filter-btn" onclick="applyQuickFilter('udp')">UDP Traffic</button>
+                    <button class="quick-filter-btn" onclick="applyQuickFilter('not arp')">No ARP</button>
+                    <button class="quick-filter-btn" onclick="applyQuickFilter('vlan')">VLAN Tagged</button>
+                    <button class="quick-filter-btn" onclick="applyQuickFilter('greater 1000')">Large Packets</button>
+                    <button class="quick-filter-btn" onclick="applyQuickFilter('icmp')">ICMP/Ping</button>
+                    <button class="quick-filter-btn" onclick="applyQuickFilter('port 179')">BGP</button>
+                    <button class="quick-filter-btn" onclick="applyQuickFilter('ether broadcast')">Broadcasts</button>
+                </div>
+                
+                <form id="filterForm">
+                    <div class="form-section">
+                        <h3>Capture Configuration</h3>
+                        <div class="info-box">
+                            <h4>💡 Arista EOS Advantages</h4>
+                            <ul>
+                                <li><strong>Data Plane Capture:</strong> Unlike NX-OS, Arista can capture transit traffic, not just control plane</li>
+                                <li><strong>Full tcpdump:</strong> Complete tcpdump functionality with all options</li>
+                                <li><strong>Hardware Acceleration:</strong> ASIC-based packet capture with minimal performance impact</li>
+                                <li><strong>Monitor Sessions:</strong> SPAN/RSPAN/ERSPAN for advanced monitoring</li>
+                            </ul>
+                        </div>
+                        <div class="form-grid">
+                            <div class="form-group">
+                                <label for="captureMode">Capture Mode</label>
+                                <select id="captureMode" onchange="updateCaptureMode()">
+                                    <option value="tcpdump">Direct tcpdump</option>
+                                    <option value="bash">Bash tcpdump</option>
+                                    <option value="monitor">Monitor Session</option>
+                                    <option value="trace">Event-Trace</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="interface">Interface</label>
+                                <select id="interface">
+                                    <option value="any">Any Interface</option>
+                                    <optgroup label="Physical">
+                                        <option value="Ethernet1">Ethernet1</option>
+                                        <option value="Ethernet1/1">Ethernet1/1</option>
+                                        <option value="Ethernet2/1">Ethernet2/1</option>
+                                        <option value="Management1">Management1</option>
+                                    </optgroup>
+                                    <optgroup label="Logical">
+                                        <option value="Vlan100">Vlan100</option>
+                                        <option value="Loopback0">Loopback0</option>
+                                        <option value="Port-Channel1">Port-Channel1</option>
+                                        <option value="Vxlan1">Vxlan1</option>
+                                    </optgroup>
+                                    <optgroup label="Special">
+                                        <option value="cpu">CPU</option>
+                                        <option value="mirror">Mirror Interface</option>
+                                    </optgroup>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="direction">Direction</label>
+                                <select id="direction">
+                                    <option value="">Both (in/out)</option>
+                                    <option value="in">Inbound only</option>
+                                    <option value="out">Outbound only</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="outputFile">Output File</label>
+                                <input type="text" id="outputFile" placeholder="flash:/captures/capture.pcap">
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="form-section">
+                        <h3>Capture Options</h3>
+                        <div class="form-grid">
+                            <div class="form-group">
+                                <label for="packetCount">Packet Count (-c)</label>
+                                <input type="number" id="packetCount" placeholder="1000">
+                            </div>
+                            <div class="form-group">
+                                <label for="snapLength">Snap Length (-s)</label>
+                                <input type="number" id="snapLength" placeholder="0 (full packet)">
+                            </div>
+                            <div class="form-group">
+                                <label for="bufferSize">Buffer Size (-B)</label>
+                                <input type="number" id="bufferSize" placeholder="4096">
+                            </div>
+                            <div class="form-group">
+                                <label for="timeout">Read Timeout (ms)</label>
+                                <input type="number" id="timeout" placeholder="1000">
+                            </div>
+                        </div>
+                        <div class="form-grid">
+                            <div class="form-group">
+                                <label>Options</label>
+                                <div class="checkbox-group">
+                                    <input type="checkbox" id="verbose"><label for="verbose">Verbose (-v)</label>
+                                    <input type="checkbox" id="veryVerbose"><label for="veryVerbose">Very Verbose (-vv)</label>
+                                    <input type="checkbox" id="noPromiscuous"><label for="noPromiscuous">No Promiscuous (-p)</label>
+                                    <input type="checkbox" id="immediate"><label for="immediate">Immediate Mode (-U)</label>
+                                    <input type="checkbox" id="noResolve"><label for="noResolve">No DNS (-n)</label>
+                                    <input type="checkbox" id="timestamps"><label for="timestamps">Timestamps (-tttt)</label>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="form-section">
+                        <h3>Network Filters</h3>
+                        <div class="form-grid">
+                            <div class="form-group">
+                                <label for="srcIP">Source IP/Network</label>
+                                <input type="text" id="srcIP" placeholder="10.1.1.1 or 10.0.0.0/8">
+                            </div>
+                            <div class="form-group">
+                                <label for="dstIP">Destination IP/Network</label>
+                                <input type="text" id="dstIP" placeholder="192.168.1.0/24">
+                            </div>
+                            <div class="form-group">
+                                <label for="anyIP">Any IP (src or dst)</label>
+                                <input type="text" id="anyIP" placeholder="172.16.1.1">
+                            </div>
+                            <div class="form-group">
+                                <label>IP Options</label>
+                                <div class="checkbox-group">
+                                    <input type="checkbox" id="excludeIP"><label for="excludeIP">Exclude (NOT)</label>
+                                    <input type="checkbox" id="ipv6Only"><label for="ipv6Only">IPv6 Only</label>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="form-section">
+                        <h3>Transport Filters</h3>
+                        <div class="form-grid">
+                            <div class="form-group">
+                                <label for="srcPort">Source Port</label>
+                                <input type="text" id="srcPort" placeholder="22 or 1024-65535">
+                            </div>
+                            <div class="form-group">
+                                <label for="dstPort">Destination Port</label>
+                                <input type="text" id="dstPort" placeholder="443">
+                            </div>
+                            <div class="form-group">
+                                <label for="anyPort">Any Port</label>
+                                <input type="text" id="anyPort" placeholder="80">
+                            </div>
+                            <div class="form-group">
+                                <label for="protocol">Protocol</label>
+                                <select id="protocol" onchange="showProtocolOptions()">
+                                    <option value="">Any Protocol</option>
+                                    <optgroup label="Common">
+                                        <option value="tcp">TCP</option>
+                                        <option value="udp">UDP</option>
+                                        <option value="icmp">ICMP</option>
+                                        <option value="icmp6">ICMPv6</option>
+                                        <option value="arp">ARP</option>
+                                        <option value="rarp">RARP</option>
+                                    </optgroup>
+                                    <optgroup label="Routing">
+                                        <option value="ospf">OSPF (proto 89)</option>
+                                        <option value="bgp">BGP (tcp/179)</option>
+                                        <option value="eigrp">EIGRP (proto 88)</option>
+                                        <option value="rip">RIP</option>
+                                        <option value="isis">IS-IS</option>
+                                        <option value="ldp">LDP</option>
+                                        <option value="bfd">BFD</option>
+                                        <option value="pim">PIM</option>
+                                    </optgroup>
+                                    <optgroup label="Tunneling">
+                                        <option value="gre">GRE</option>
+                                        <option value="vxlan">VXLAN</option>
+                                        <option value="geneve">GENEVE</option>
+                                        <option value="mpls">MPLS</option>
+                                        <option value="l2tp">L2TP</option>
+                                        <option value="ipsec">IPSec (ESP/AH)</option>
+                                    </optgroup>
+                                    <optgroup label="Layer 2">
+                                        <option value="stp">STP</option>
+                                        <option value="lldp">LLDP</option>
+                                        <option value="lacp">LACP</option>
+                                        <option value="cdp">CDP</option>
+                                        <option value="vtp">VTP</option>
+                                        <option value="dot1q">802.1Q VLAN</option>
+                                    </optgroup>
+                                    <optgroup label="Management">
+                                        <option value="ssh">SSH</option>
+                                        <option value="telnet">Telnet</option>
+                                        <option value="snmp">SNMP</option>
+                                        <option value="ntp">NTP</option>
+                                        <option value="syslog">Syslog</option>
+                                        <option value="radius">RADIUS</option>
+                                        <option value="tacacs">TACACS+</option>
+                                        <option value="netconf">NETCONF</option>
+                                        <option value="gnmi">gNMI</option>
+                                    </optgroup>
+                                    <optgroup label="Services">
+                                        <option value="dhcp">DHCP</option>
+                                        <option value="dhcp6">DHCPv6</option>
+                                        <option value="dns">DNS</option>
+                                        <option value="http">HTTP</option>
+                                        <option value="https">HTTPS</option>
+                                        <option value="ftp">FTP</option>
+                                        <option value="tftp">TFTP</option>
+                                    </optgroup>
+                                </select>
+                            </div>
+                        </div>
+                        
+                        <!-- TCP Options -->
+                        <div id="tcpOptions" class="protocol-specific" style="display: none;">
+                            <h4>TCP Specific Filters</h4>
+                            <div class="form-grid">
+                                <div class="form-group">
+                                    <label>TCP Flags</label>
+                                    <div class="checkbox-group">
+                                        <input type="checkbox" id="tcpSyn"><label for="tcpSyn">SYN</label>
+                                        <input type="checkbox" id="tcpAck"><label for="tcpAck">ACK</label>
+                                        <input type="checkbox" id="tcpFin"><label for="tcpFin">FIN</label>
+                                        <input type="checkbox" id="tcpRst"><label for="tcpRst">RST</label>
+                                        <input type="checkbox" id="tcpPsh"><label for="tcpPsh">PSH</label>
+                                        <input type="checkbox" id="tcpUrg"><label for="tcpUrg">URG</label>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="form-section">
+                        <h3>Advanced Filters</h3>
+                        <div class="form-grid">
+                            <div class="form-group">
+                                <label for="vlan">VLAN ID</label>
+                                <input type="text" id="vlan" placeholder="100 or 100-200">
+                            </div>
+                            <div class="form-group">
+                                <label for="macSrc">Source MAC</label>
+                                <input type="text" id="macSrc" placeholder="aa:bb:cc:dd:ee:ff">
+                            </div>
+                            <div class="form-group">
+                                <label for="macDst">Destination MAC</label>
+                                <input type="text" id="macDst" placeholder="11:22:33:44:55:66">
+                            </div>
+                            <div class="form-group">
+                                <label for="packetSize">Packet Size</label>
+                                <select id="packetSize">
+                                    <option value="">Any Size</option>
+                                    <option value="less 64">Less than 64 bytes</option>
+                                    <option value="greater 1500">Greater than 1500 bytes</option>
+                                    <option value="greater 9000">Jumbo (>9000)</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="advanced-options">
+                        <h3>EOS-Specific Features</h3>
+                        <div class="form-grid">
+                            <div class="form-group">
+                                <label for="cpuQueue">CPU Queue Filter</label>
+                                <select id="cpuQueue">
+                                    <option value="">All Queues</option>
+                                    <option value="control">Control Plane</option>
+                                    <option value="management">Management</option>
+                                    <option value="routing">Routing Protocols</option>
+                                    <option value="l2protocol">L2 Protocols</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="aclFilter">ACL-based Filter</label>
+                                <input type="text" id="aclFilter" placeholder="ACL name">
+                            </div>
+                            <div class="form-group">
+                                <label for="ringBuffer">Ring Buffer Files</label>
+                                <input type="number" id="ringBuffer" placeholder="Number of files">
+                            </div>
+                            <div class="form-group">
+                                <label for="fileSize">File Size (MB)</label>
+                                <input type="number" id="fileSize" placeholder="100">
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="form-section">
+                        <h3>Custom BPF Filter</h3>
+                        <div class="form-group">
+                            <label for="customFilter">Manual Filter Expression</label>
+                            <textarea id="customFilter" rows="3" placeholder="Enter custom tcpdump/BPF filter expression"></textarea>
+                        </div>
+                    </div>
+                    
+                    <div class="button-group">
+                        <button type="button" class="btn-primary" onclick="generateCommand()">Generate Command</button>
+                        <button type="button" class="btn-secondary" onclick="clearForm()">Clear All</button>
+                        <button type="button" class="btn-secondary" onclick="saveAsTemplate()">Save Template</button>
+                        <button type="button" class="btn-secondary" onclick="exportCommand()">Export</button>
+                    </div>
+                </form>
+                
+                <div class="output-section" id="outputSection" style="display: none;">
+                    <h3>
+                        Generated EOS Commands
+                        <button class="copy-btn" onclick="copyCommand()">📋 Copy</button>
+                    </h3>
+                    <div class="command-output" id="commandOutput"></div>
+                    
+                    <div class="info-box" style="margin-top: 20px;">
+                        <h4>Command Explanation:</h4>
+                        <div id="commandExplanation"></div>
+                    </div>
+                    
+                    <div class="info-box success" style="margin-top: 20px;">
+                        <h4>📝 Next Steps:</h4>
+                        <ul id="nextSteps">
+                            <li>SSH to your Arista switch</li>
+                            <li>Enter the command above</li>
+                            <li>Press Ctrl+C to stop capture</li>
+                            <li>Copy PCAP file for analysis in Wireshark</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Visual Builder Tab -->
+            <div id="visual" class="tab-content">
+                <h3>Visual Filter Builder</h3>
+                <div class="info-box">
+                    <h4>Build complex tcpdump filters visually</h4>
+                    <p>Add conditions using dropdowns - no need to remember BPF syntax!</p>
+                </div>
+                
+                <div class="visual-builder">
+                    <h4>Build Your Capture Filter</h4>
+                    <div id="visualConditions">
+                        <div class="filter-condition" id="condition1">
+                            <select class="field-select" id="field1">
+                                <option value="">Select Field...</option>
+                                <option value="src">Source IP</option>
+                                <option value="dst">Destination IP</option>
+                                <option value="host">Any IP</option>
+                                <option value="net">Network</option>
+                                <option value="port">Any Port</option>
+                                <option value="src-port">Source Port</option>
+                                <option value="dst-port">Dest Port</option>
+                                <option value="proto">Protocol</option>
+                                <option value="vlan">VLAN</option>
+                                <option value="ether-src">Source MAC</option>
+                                <option value="ether-dst">Dest MAC</option>
+                                <option value="len">Packet Length</option>
+                            </select>
+                            <select class="operator-select" id="operator1">
+                                <option value="">is</option>
+                                <option value="not">is not</option>
+                                <option value="greater">greater than</option>
+                                <option value="less">less than</option>
+                            </select>
+                            <input type="text" class="value-input" id="value1" placeholder="Enter value...">
+                            <select class="logic-operator" id="logic1">
+                                <option value="and">AND</option>
+                                <option value="or">OR</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div style="margin-top: 15px;">
+                        <button class="add-condition-btn" onclick="addVisualCondition()">+ Add Condition</button>
+                        <button class="btn-primary" onclick="buildVisualFilter()" style="margin-left: 10px;">Build Filter</button>
+                    </div>
+                </div>
+                
+                <div class="output-section" id="visualOutput" style="display: none; margin-top: 20px;">
+                    <h3>Visual Builder Output</h3>
+                    <div class="command-output" id="visualCommandOutput"></div>
+                    <button class="copy-btn" onclick="copyVisualCommand()" style="margin-top: 10px;">📋 Copy</button>
+                </div>
+            </div>
+            
+            <!-- Monitor Sessions Tab -->
+            <div id="monitor" class="tab-content">
+                <h3>Monitor Session Configuration</h3>
+                <div class="info-box">
+                    <h4>SPAN/RSPAN/ERSPAN Configuration</h4>
+                    <p>Configure port mirroring for advanced packet capture scenarios</p>
+                </div>
+                
+                <div class="form-section">
+                    <h3>Session Configuration</h3>
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label for="sessionName">Session Name</label>
+                            <input type="text" id="sessionName" placeholder="capture1">
+                        </div>
+                        <div class="form-group">
+                            <label for="sessionType">Session Type</label>
+                            <select id="sessionType" onchange="updateSessionType()">
+                                <option value="span">SPAN (Local)</option>
+                                <option value="rspan">RSPAN (Remote)</option>
+                                <option value="erspan">ERSPAN (Encapsulated)</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="sourceInterface">Source Interface(s)</label>
+                            <input type="text" id="sourceInterface" placeholder="Ethernet1, Ethernet2">
+                        </div>
+                        <div class="form-group">
+                            <label for="destInterface">Destination</label>
+                            <input type="text" id="destInterface" placeholder="Ethernet10 or IP for ERSPAN">
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="form-section">
+                    <h3>Filter Options</h3>
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label for="monitorDirection">Traffic Direction</label>
+                            <select id="monitorDirection">
+                                <option value="both">Both (RX and TX)</option>
+                                <option value="rx">RX only</option>
+                                <option value="tx">TX only</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="monitorACL">Access List Filter</label>
+                            <input type="text" id="monitorACL" placeholder="ACL name (optional)">
+                        </div>
+                        <div class="form-group">
+                            <label for="truncation">Truncation Size</label>
+                            <input type="number" id="truncation" placeholder="Bytes (optional)">
+                        </div>
+                        <div class="form-group">
+                            <label for="sampling">Sampling Rate</label>
+                            <input type="text" id="sampling" placeholder="1:1000 (optional)">
+                        </div>
+                    </div>
+                </div>
+                
+                <div id="erspanOptions" style="display: none;">
+                    <div class="form-section">
+                        <h3>ERSPAN Options</h3>
+                        <div class="form-grid">
+                            <div class="form-group">
+                                <label for="erspanSource">Source IP</label>
+                                <input type="text" id="erspanSource" placeholder="10.1.1.1">
+                            </div>
+                            <div class="form-group">
+                                <label for="erspanDest">Destination IP</label>
+                                <input type="text" id="erspanDest" placeholder="10.2.2.2">
+                            </div>
+                            <div class="form-group">
+                                <label for="erspanId">ERSPAN ID</label>
+                                <input type="number" id="erspanId" placeholder="100">
+                            </div>
+                            <div class="form-group">
+                                <label for="erspanTTL">TTL</label>
+                                <input type="number" id="erspanTTL" placeholder="64">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="button-group">
+                    <button type="button" class="btn-primary" onclick="generateMonitorSession()">Generate Monitor Config</button>
+                    <button type="button" class="btn-secondary" onclick="clearMonitorForm()">Clear</button>
+                </div>
+                
+                <div class="output-section" id="monitorOutput" style="display: none; margin-top: 20px;">
+                    <h3>Monitor Session Configuration</h3>
+                    <div class="command-output" id="monitorCommandOutput"></div>
+                </div>
+            </div>
+            
+            <!-- Scenarios Tab -->
+            <div id="scenarios" class="tab-content">
+                <h3>Common Capture Scenarios</h3>
+                <p style="color: #666; margin-bottom: 20px;">Pre-configured capture scenarios for Arista EOS. Click to load.</p>
+                
+                <div id="scenariosList">
+                    <!-- Scenarios will be loaded by JavaScript -->
+                </div>
+            </div>
+            
+            <!-- Templates Tab -->
+            <div id="templates" class="tab-content">
+                <h3>Capture Templates</h3>
+                <div class="filter-templates" id="templatesList">
+                    <!-- Templates will be loaded by JavaScript -->
+                </div>
+            </div>
+            
+            <!-- Reference Tab -->
+            <div id="reference" class="tab-content">
+                <h3>Arista EOS Packet Capture Reference</h3>
+                
+                <div class="info-box">
+                    <h4>tcpdump Options</h4>
+                    <ul>
+                        <li><code>-i interface</code> - Specify interface</li>
+                        <li><code>-c count</code> - Capture specific number of packets</li>
+                        <li><code>-s snaplen</code> - Snap length (0 = full packet)</li>
+                        <li><code>-w file</code> - Write to file</li>
+                        <li><code>-r file</code> - Read from file</li>
+                        <li><code>-n</code> - Don't resolve hostnames</li>
+                        <li><code>-v/-vv/-vvv</code> - Verbose levels</li>
+                        <li><code>-U</code> - Packet unbuffered output</li>
+                        <li><code>-B buffer</code> - Buffer size in KB</li>
+                        <li><code>-C filesize</code> - File size before rotation (MB)</li>
+                        <li><code>-G seconds</code> - Rotate files every N seconds</li>
+                        <li><code>-W count</code> - Number of files in rotation</li>
+                    </ul>
+                </div>
+                
+                <div class="info-box">
+                    <h4>BPF Filter Syntax</h4>
+                    <ul>
+                        <li><code>host 10.1.1.1</code> - Traffic to/from host</li>
+                        <li><code>net 192.168.0.0/16</code> - Traffic to/from network</li>
+                        <li><code>port 80</code> - Traffic on port 80</li>
+                        <li><code>portrange 1024-65535</code> - Port range</li>
+                        <li><code>src/dst</code> - Direction qualifiers</li>
+                        <li><code>and/or/not</code> - Logical operators</li>
+                        <li><code>proto \\ospf</code> - Protocol by name</li>
+                        <li><code>vlan 100</code> - VLAN tagged traffic</li>
+                        <li><code>mpls</code> - MPLS labeled packets</li>
+                        <li><code>ether host aa:bb:cc:dd:ee:ff</code> - MAC address</li>
+                        <li><code>greater/less</code> - Packet size filters</li>
+                    </ul>
+                </div>
+                
+                <div class="info-box">
+                    <h4>EOS-Specific Commands</h4>
+                    <ul>
+                        <li><code>bash tcpdump</code> - Run tcpdump from bash</li>
+                        <li><code>tcpdump</code> - Direct tcpdump (4.21+)</li>
+                        <li><code>monitor session</code> - Configure SPAN/ERSPAN</li>
+                        <li><code>show monitor session</code> - View sessions</li>
+                        <li><code>event-trace</code> - Platform event tracing</li>
+                        <li><code>trace</code> - Packet path tracing</li>
+                        <li><code>show platform fap capture</code> - Hardware captures</li>
+                    </ul>
+                </div>
+                
+                <div class="info-box warning">
+                    <h4>⚠️ Important Notes</h4>
+                    <ul>
+                        <li>Data plane capture may impact performance on high-traffic interfaces</li>
+                        <li>Use specific filters to reduce CPU load</li>
+                        <li>Store captures on flash: or external storage for large files</li>
+                        <li>Monitor sessions don't impact control plane CPU</li>
+                        <li>ERSPAN adds GRE overhead - account for MTU</li>
+                        <li>Hardware ACL filters are most efficient</li>
+                    </ul>
+                </div>
+            </div>
+            
+            <!-- Help Tab -->
+            <div id="help" class="tab-content">
+                <div class="help-section">
+                    <h3>📖 Arista EOS Packet Capture Guide</h3>
+                    
+                    <div class="protocol-category">
+                        <h4>🎯 Capture Methods Explained</h4>
+                        <div class="help-grid">
+                            <div class="help-card">
+                                <h4>Direct tcpdump</h4>
+                                <p><strong>When to use:</strong> Quick captures, troubleshooting<br>
+                                <strong>Pros:</strong> Simple, immediate results<br>
+                                <strong>Cons:</strong> CPU impact on high traffic<br>
+                                <strong>Example:</strong> <code>tcpdump -i Ethernet1 -c 100</code><br>
+                                <strong>Best for:</strong> Control plane, low-traffic scenarios</p>
+                            </div>
+                            <div class="help-card">
+                                <h4>Monitor Sessions (SPAN)</h4>
+                                <p><strong>When to use:</strong> Production monitoring<br>
+                                <strong>Pros:</strong> Hardware-based, no CPU impact<br>
+                                <strong>Cons:</strong> Requires dedicated port<br>
+                                <strong>Example:</strong> <code>monitor session capture1 source Ethernet1</code><br>
+                                <strong>Best for:</strong> Long-term capture, high traffic</p>
+                            </div>
+                            <div class="help-card">
+                                <h4>ERSPAN</h4>
+                                <p><strong>When to use:</strong> Remote capture<br>
+                                <strong>Pros:</strong> Capture to remote collector<br>
+                                <strong>Cons:</strong> Adds encapsulation overhead<br>
+                                <strong>Example:</strong> Send captures over IP network<br>
+                                <strong>Best for:</strong> Centralized monitoring</p>
+                            </div>
+                            <div class="help-card">
+                                <h4>Event-Trace</h4>
+                                <p><strong>When to use:</strong> Platform debugging<br>
+                                <strong>Pros:</strong> Detailed platform events<br>
+                                <strong>Cons:</strong> EOS-specific format<br>
+                                <strong>Example:</strong> <code>trace &lt;options&gt;</code><br>
+                                <strong>Best for:</strong> TAC troubleshooting</p>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="protocol-category">
+                        <h4>🔧 Interface Selection</h4>
+                        <div class="help-grid">
+                            <div class="help-card">
+                                <h4>Physical Interfaces</h4>
+                                <p><strong>Ethernet:</strong> Standard data ports<br>
+                                Format: Ethernet1, Ethernet1/1 (modular)<br>
+                                <strong>Management1:</strong> Out-of-band mgmt<br>
+                                Isolated from data plane<br>
+                                <strong>Best practice:</strong> Use specific interface for targeted capture</p>
+                            </div>
+                            <div class="help-card">
+                                <h4>Logical Interfaces</h4>
+                                <p><strong>Vlan:</strong> SVI interfaces (Vlan100)<br>
+                                <strong>Port-Channel:</strong> LAG interfaces<br>
+                                <strong>Loopback:</strong> Virtual interfaces<br>
+                                <strong>Vxlan1:</strong> VXLAN VTEP interface<br>
+                                <strong>Note:</strong> Captures see post-encap/decap traffic</p>
+                            </div>
+                            <div class="help-card">
+                                <h4>Special Interfaces</h4>
+                                <p><strong>any:</strong> All interfaces (high CPU!)<br>
+                                <strong>cpu:</strong> Control plane only<br>
+                                <strong>mirror:</strong> Monitor session destination<br>
+                                <strong>Tip:</strong> Use 'cpu' for control plane analysis</p>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="protocol-category">
+                        <h4>⚡ Performance Optimization</h4>
+                        <div class="help-grid">
+                            <div class="help-card">
+                                <h4>Filter Efficiency</h4>
+                                <p><strong>Hardware filters:</strong> Use ACLs when possible<br>
+                                <strong>BPF placement:</strong> Most specific filters first<br>
+                                <strong>Protocol filters:</strong> Very efficient<br>
+                                <strong>Avoid:</strong> Complex expressions without need<br>
+                                <strong>Tip:</strong> <code>tcp port 80</code> faster than complex patterns</p>
+                            </div>
+                            <div class="help-card">
+                                <h4>Buffer Management</h4>
+                                <p><strong>-B option:</strong> Increase for high-speed<br>
+                                <strong>-s snaplen:</strong> Capture only headers (64-96 bytes)<br>
+                                <strong>-c count:</strong> Limit total packets<br>
+                                <strong>Ring buffer:</strong> Use -C and -W for rotation<br>
+                                <strong>Storage:</strong> Use flash: or external USB</p>
+                            </div>
+                            <div class="help-card">
+                                <h4>CPU Protection</h4>
+                                <p><strong>CoPP:</strong> Protects CPU from overload<br>
+                                <strong>Rate limiting:</strong> Built-in protection<br>
+                                <strong>Hardware offload:</strong> Use monitor sessions<br>
+                                <strong>Sampling:</strong> Reduce load with 1:N sampling<br>
+                                <strong>Time limit:</strong> Use timeout or packet count</p>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="protocol-category">
+                        <h4>📝 Common Use Cases</h4>
+                        <div class="help-grid">
+                            <div class="help-card">
+                                <h4>BGP Troubleshooting</h4>
+                                <p><code>tcpdump -i any -n tcp port 179</code><br>
+                                Captures all BGP traffic<br>
+                                Add <code>-vv</code> for TCP flags<br>
+                                Filter by peer: <code>and host 10.1.1.1</code></p>
+                            </div>
+                            <div class="help-card">
+                                <h4>VXLAN Analysis</h4>
+                                <p><code>tcpdump -i Ethernet1 udp port 4789</code><br>
+                                Capture VXLAN encapsulated traffic<br>
+                                Decode with: <code>-vv</code><br>
+                                Filter VNI in Wireshark later</p>
+                            </div>
+                            <div class="help-card">
+                                <h4>Multicast Debug</h4>
+                                <p><code>tcpdump -i any multicast</code><br>
+                                All multicast traffic<br>
+                                IGMP: <code>igmp</code><br>
+                                PIM: <code>pim or proto 103</code></p>
+                            </div>
+                            <div class="help-card">
+                                <h4>Voice/Video QoS</h4>
+                                <p><code>tcpdump -i any -n udp portrange 16384-32767</code><br>
+                                RTP media streams<br>
+                                Check DSCP: <code>-v</code> shows TOS field<br>
+                                SIP: <code>port 5060</code></p>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="info-box success">
+                        <h4>✅ Best Practices</h4>
+                        <ul>
+                            <li><strong>Start specific:</strong> Use targeted filters to reduce noise</li>
+                            <li><strong>Use -n:</strong> Skip DNS lookups for better performance</li>
+                            <li><strong>Timestamp everything:</strong> Use -tttt for full timestamps</li>
+                            <li><strong>Rotate files:</strong> Use -C and -W for long captures</li>
+                            <li><strong>Hardware when possible:</strong> Monitor sessions for production</li>
+                            <li><strong>Document filters:</strong> Save complex filters as templates</li>
+                            <li><strong>Test first:</strong> Verify filters with -c 10 before long captures</li>
+                        </ul>
+                    </div>
+                    
+                    <div class="info-box warning">
+                        <h4>⚠️ Common Pitfalls</h4>
+                        <ul>
+                            <li><strong>No 'any' in production:</strong> Can overload CPU quickly</li>
+                            <li><strong>VLAN tags:</strong> Use 'vlan' keyword for tagged traffic</li>
+                            <li><strong>Storage space:</strong> Monitor /mnt/flash usage</li>
+                            <li><strong>Encapsulation:</strong> Captured inside tunnels needs deeper decode</li>
+                            <li><strong>Timestamps:</strong> EOS uses system clock - ensure NTP sync</li>
+                            <li><strong>Permissions:</strong> Some commands need 'enable' mode</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        // Scenarios database
+        const scenarios = [
+            {
+                name: "BGP Session Troubleshooting",
+                icon: "🌐",
+                symptoms: "BGP peer down or flapping",
+                command: "tcpdump -i any -n -vv tcp port 179",
+                description: "Capture all BGP traffic with TCP flags visible",
+                tips: ["Look for TCP RST packets", "Check for OPEN message exchanges", "Verify keepalive timers"]
+            },
+            {
+                name: "OSPF Adjacency Issues",
+                icon: "🗺️",
+                symptoms: "OSPF neighbors not forming",
+                command: "tcpdump -i any -n proto ospf",
+                description: "Capture OSPF protocol packets",
+                tips: ["Check hello intervals", "Verify area IDs", "Look for MTU mismatches in DBD"]
+            },
+            {
+                name: "VXLAN Overlay Problems",
+                icon: "🚇",
+                symptoms: "VXLAN tunnel issues, VTEP problems",
+                command: "tcpdump -i Ethernet1 -n udp port 4789",
+                description: "Capture VXLAN encapsulated traffic",
+                tips: ["Verify VTEP IPs", "Check VNI values", "Look for fragmentation"]
+            },
+            {
+                name: "DHCP Client Issues",
+                icon: "📋",
+                symptoms: "Clients not getting IP addresses",
+                command: "tcpdump -i any -n udp port 67 or udp port 68",
+                description: "Capture DHCP traffic",
+                tips: ["Look for DISCOVER packets", "Check for OFFER responses", "Verify relay agent"]
+            },
+            {
+                name: "Multicast Traffic Analysis",
+                icon: "📡",
+                symptoms: "Multicast streams not received",
+                command: "tcpdump -i any -n multicast",
+                description: "Capture all multicast traffic",
+                tips: ["Check IGMP joins", "Verify PIM neighbors", "Look for RPF failures"]
+            },
+            {
+                name: "Voice/RTP Stream Debug",
+                icon: "📞",
+                symptoms: "Voice quality issues, jitter",
+                command: "tcpdump -i any -n udp portrange 16384-32767 -s 200",
+                description: "Capture RTP streams (limited snap length)",
+                tips: ["Check packet intervals", "Look for out-of-order", "Verify DSCP markings"]
+            },
+            {
+                name: "STP/Loop Detection",
+                icon: "🔄",
+                symptoms: "Spanning tree issues, loops",
+                command: "tcpdump -i any -n stp",
+                description: "Capture STP BPDUs",
+                tips: ["Check for TCN floods", "Verify root bridge", "Look for port role changes"]
+            },
+            {
+                name: "LLDP/CDP Discovery",
+                icon: "🔍",
+                symptoms: "Neighbor discovery issues",
+                command: "tcpdump -i any -n '(ether proto 0x88cc) or (ether[20:2] == 0x2000)'",
+                description: "Capture LLDP and CDP packets",
+                tips: ["Verify neighbor info", "Check capabilities", "Validate VLAN info"]
+            },
+            {
+                name: "DNS Resolution Problems",
+                icon: "🔎",
+                symptoms: "Name resolution failures",
+                command: "tcpdump -i any -n udp port 53",
+                description: "Capture DNS queries and responses",
+                tips: ["Check for NXDOMAIN", "Verify response times", "Look for truncated responses"]
+            },
+            {
+                name: "HTTP/HTTPS Traffic",
+                icon: "🌐",
+                symptoms: "Web application issues",
+                command: "tcpdump -i any -n 'tcp port 80 or tcp port 443' -s 1500",
+                description: "Capture web traffic with full headers",
+                tips: ["Check HTTP response codes", "Verify SSL handshake", "Look for RST packets"]
+            },
+            {
+                name: "IPSec VPN Debug",
+                icon: "🔐",
+                symptoms: "VPN tunnel establishment issues",
+                command: "tcpdump -i any -n 'udp port 500 or udp port 4500 or proto 50 or proto 51'",
+                description: "Capture IKE, NAT-T, ESP, and AH",
+                tips: ["Check IKE phase 1", "Verify NAT detection", "Look for ESP packets"]
+            },
+            {
+                name: "LACP/Port-Channel",
+                icon: "🔗",
+                symptoms: "Port-channel not forming",
+                command: "tcpdump -i Ethernet1 -n 'ether proto 0x8809'",
+                description: "Capture LACP packets",
+                tips: ["Check system IDs", "Verify key values", "Look for timeout mismatches"]
+            },
+            {
+                name: "BFD Session Monitoring",
+                icon: "⚡",
+                symptoms: "BFD flapping, false positives",
+                command: "tcpdump -i any -n udp port 3784",
+                description: "Capture BFD control packets",
+                tips: ["Check intervals", "Verify discriminators", "Look for state changes"]
+            },
+            {
+                name: "MPLS Label Analysis",
+                icon: "🏷️",
+                symptoms: "MPLS forwarding issues",
+                command: "tcpdump -i any -n mpls",
+                description: "Capture MPLS labeled packets",
+                tips: ["Check label stack", "Verify TTL", "Look for PHP behavior"]
+            },
+            {
+                name: "ARP Issues",
+                icon: "📮",
+                symptoms: "ARP resolution problems",
+                command: "tcpdump -i any -n arp",
+                description: "Capture ARP requests and replies",
+                tips: ["Check for duplicates", "Verify MAC addresses", "Look for gratuitous ARPs"]
+            },
+            {
+                name: "Management Traffic",
+                icon: "⚙️",
+                symptoms: "Management access issues",
+                command: "tcpdump -i Management1 -n 'tcp port 22 or tcp port 23 or tcp port 443'",
+                description: "Capture management protocols",
+                tips: ["Check TCP handshake", "Verify source IPs", "Look for connection resets"]
+            },
+            {
+                name: "SNMP Polling",
+                icon: "📊",
+                symptoms: "SNMP timeouts or failures",
+                command: "tcpdump -i any -n udp port 161 or udp port 162",
+                description: "Capture SNMP requests and traps",
+                tips: ["Check community strings", "Verify OIDs", "Look for response times"]
+            },
+            {
+                name: "NTP Sync Issues",
+                icon: "⏰",
+                symptoms: "Time synchronization problems",
+                command: "tcpdump -i any -n udp port 123",
+                description: "Capture NTP traffic",
+                tips: ["Check stratum", "Verify server responses", "Look for KoD packets"]
+            },
+            {
+                name: "TCP Performance",
+                icon: "📈",
+                symptoms: "Slow TCP transfers",
+                command: "tcpdump -i any -n -ttt -S tcp",
+                description: "Capture TCP with absolute sequence numbers and timestamps",
+                tips: ["Check window sizes", "Look for retransmissions", "Verify SACK options"]
+            },
+            {
+                name: "Broadcast Storm Detection",
+                icon: "⛈️",
+                symptoms: "High CPU, network slowdown",
+                command: "tcpdump -i any -n ether broadcast -c 1000",
+                description: "Sample broadcast traffic",
+                tips: ["Identify source", "Check packet rate", "Look for loops"]
+            }
+        ];
+        
+        // Templates database
+        const templates = [
+            {
+                name: "Basic TCP Capture",
+                description: "All TCP traffic",
+                command: "tcpdump -i any tcp"
+            },
+            {
+                name: "UDP Services",
+                description: "All UDP traffic",
+                command: "tcpdump -i any udp"
+            },
+            {
+                name: "No ARP/Broadcast",
+                description: "Filter out noise",
+                command: "tcpdump -i any not arp and not ether broadcast"
+            },
+            {
+                name: "ICMP Only",
+                description: "Ping and ICMP messages",
+                command: "tcpdump -i any icmp"
+            },
+            {
+                name: "Large Packets",
+                description: "Packets over 1400 bytes",
+                command: "tcpdump -i any greater 1400"
+            },
+            {
+                name: "Small Packets",
+                description: "Packets under 100 bytes",
+                command: "tcpdump -i any less 100"
+            },
+            {
+                name: "VLAN Tagged",
+                description: "Only VLAN tagged traffic",
+                command: "tcpdump -i any vlan"
+            },
+            {
+                name: "Specific VLAN",
+                description: "Traffic on VLAN 100",
+                command: "tcpdump -i any vlan 100"
+            },
+            {
+                name: "TCP SYN",
+                description: "TCP connection attempts",
+                command: "tcpdump -i any 'tcp[tcpflags] & (tcp-syn) != 0'"
+            },
+            {
+                name: "TCP RST",
+                description: "TCP resets",
+                command: "tcpdump -i any 'tcp[tcpflags] & (tcp-rst) != 0'"
+            },
+            {
+                name: "HTTP GET/POST",
+                description: "HTTP requests",
+                command: "tcpdump -i any -s 0 -A 'tcp port 80 and (tcp[32:4] = 0x47455420 or tcp[32:4] = 0x504f5354)'"
+            },
+            {
+                name: "Full Packet Capture",
+                description: "Complete packets to file",
+                command: "tcpdump -i any -s 0 -w /mnt/flash/capture.pcap"
+            },
+            {
+                name: "Ring Buffer Capture",
+                description: "Rotating capture files",
+                command: "tcpdump -i any -s 0 -C 100 -W 10 -w /mnt/flash/capture.pcap"
+            },
+            {
+                name: "Time-Limited Capture",
+                description: "Capture for 60 seconds",
+                command: "timeout 60 tcpdump -i any -w /mnt/flash/capture.pcap"
+            },
+            {
+                name: "IPv6 Traffic",
+                description: "IPv6 packets only",
+                command: "tcpdump -i any ip6"
+            },
+            {
+                name: "Multicast",
+                description: "All multicast traffic",
+                command: "tcpdump -i any multicast"
+            },
+            {
+                name: "Jumbo Frames",
+                description: "Packets over 9000 bytes",
+                command: "tcpdump -i any greater 9000"
+            },
+            {
+                name: "MAC Address Filter",
+                description: "Specific MAC address",
+                command: "tcpdump -i any ether host aa:bb:cc:dd:ee:ff"
+            },
+            {
+                name: "Port Range",
+                description: "Dynamic port range",
+                command: "tcpdump -i any portrange 1024-65535"
+            },
+            {
+                name: "Non-IP Traffic",
+                description: "Layer 2 protocols",
+                command: "tcpdump -i any not ip and not ip6"
+            }
+        ];
+        
+        // Visual builder condition counter
+        let visualConditionCount = 1;
+        
+        // Initialize on load
+        window.onload = function() {
+            loadScenarios();
+            loadTemplates();
+        };
+        
+        function loadScenarios() {
+            const container = document.getElementById('scenariosList');
+            container.innerHTML = scenarios.map(scenario => `
+                <div class="scenario-card" onclick="loadScenario('${scenario.name}')">
+                    <h4>${scenario.icon} ${scenario.name}</h4>
+                    <p style="color: #666;"><strong>Symptoms:</strong> ${scenario.symptoms}</p>
+                    <p style="color: #888; font-size: 13px;">${scenario.description}</p>
+                    <code style="background: #f5f5f5; padding: 8px; border-radius: 4px; display: block; margin-top: 10px;">
+                        ${scenario.command}
+                    </code>
+                </div>
+            `).join('');
+        }
+        
+        function loadTemplates() {
+            const container = document.getElementById('templatesList');
+            container.innerHTML = templates.map(template => `
+                <div class="template-card" onclick="loadTemplate('${template.name}')">
+                    <h4>${template.name}</h4>
+                    <p>${template.description}</p>
+                    <code>${template.command}</code>
+                </div>
+            `).join('');
+        }
+        
+        function loadScenario(scenarioName) {
+            const scenario = scenarios.find(s => s.name === scenarioName);
+            if (scenario) {
+                document.getElementById('customFilter').value = scenario.command;
+                switchTab('generator');
+                generateCommand();
+                
+                // Add scenario tips to explanation
+                const explanation = document.getElementById('commandExplanation');
+                let tips = `<div style="margin-top: 10px;"><strong>Troubleshooting Tips:</strong><ul>`;
+                scenario.tips.forEach(tip => {
+                    tips += `<li>${tip}</li>`;
+                });
+                tips += '</ul></div>';
+                explanation.innerHTML += tips;
+            }
+        }
+        
+        function loadTemplate(templateName) {
+            const template = templates.find(t => t.name === templateName);
+            if (template) {
+                document.getElementById('customFilter').value = template.command;
+                switchTab('generator');
+                generateCommand();
+            }
+        }
+        
+        function switchTab(tabName) {
+            document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+            
+            event.target.classList.add('active');
+            document.getElementById(tabName).classList.add('active');
+        }
+        
+        function applyQuickFilter(filter) {
+            const customFilter = document.getElementById('customFilter');
+            if (customFilter.value) {
+                customFilter.value += ' and ' + filter;
+            } else {
+                customFilter.value = filter;
+            }
+            generateCommand();
+        }
+        
+        function generateCommand() {
+            const mode = document.getElementById('captureMode').value;
+            const interface = document.getElementById('interface').value;
+            const direction = document.getElementById('direction').value;
+            const outputFile = document.getElementById('outputFile').value;
+            
+            // Options
+            const packetCount = document.getElementById('packetCount').value;
+            const snapLength = document.getElementById('snapLength').value;
+            const bufferSize = document.getElementById('bufferSize').value;
+            
+            // Flags
+            const verbose = document.getElementById('verbose').checked;
+            const veryVerbose = document.getElementById('veryVerbose').checked;
+            const noPromiscuous = document.getElementById('noPromiscuous').checked;
+            const immediate = document.getElementById('immediate').checked;
+            const noResolve = document.getElementById('noResolve').checked;
+            const timestamps = document.getElementById('timestamps').checked;
+            
+            // Build command
+            let command = '';
+            
+            if (mode === 'bash') {
+                command = 'bash tcpdump';
+            } else if (mode === 'tcpdump') {
+                command = 'tcpdump';
+            } else if (mode === 'monitor') {
+                generateMonitorSession();
+                return;
+            }
+            
+            // Add interface
+            if (interface && interface !== 'any') {
+                command += ` -i ${interface}`;
+            } else if (interface === 'any') {
+                command += ' -i any';
+            }
+            
+            // Add options
+            if (packetCount) command += ` -c ${packetCount}`;
+            if (snapLength) command += ` -s ${snapLength}`;
+            if (bufferSize) command += ` -B ${bufferSize}`;
+            
+            // Add flags
+            if (noResolve) command += ' -n';
+            if (veryVerbose) {
+                command += ' -vv';
+            } else if (verbose) {
+                command += ' -v';
+            }
+            if (noPromiscuous) command += ' -p';
+            if (immediate) command += ' -U';
+            if (timestamps) command += ' -tttt';
+            
+            // Add output file
+            if (outputFile) {
+                command += ` -w ${outputFile}`;
+                
+                // Add ring buffer options if specified
+                const ringBuffer = document.getElementById('ringBuffer').value;
+                const fileSize = document.getElementById('fileSize').value;
+                
+                if (fileSize) command += ` -C ${fileSize}`;
+                if (ringBuffer) command += ` -W ${ringBuffer}`;
+            }
+            
+            // Build filter
+            let filter = buildFilter();
+            if (filter) {
+                command += ` '${filter}'`;
+            }
+            
+            // Display output
+            document.getElementById('commandOutput').textContent = command;
+            document.getElementById('outputSection').style.display = 'block';
+            
+            // Generate explanation
+            let explanation = '<ul>';
+            explanation += `<li><strong>Mode:</strong> ${mode}</li>`;
+            explanation += `<li><strong>Interface:</strong> ${interface || 'Not specified'}</li>`;
+            if (filter) {
+                explanation += `<li><strong>Filter:</strong> ${filter}</li>`;
+            }
+            if (outputFile) {
+                explanation += `<li><strong>Output:</strong> ${outputFile}</li>`;
+            }
+            explanation += '</ul>';
+            
+            document.getElementById('commandExplanation').innerHTML = explanation;
+        }
+        
+        function buildFilter() {
+            const customFilter = document.getElementById('customFilter').value;
+            if (customFilter) return customFilter;
+            
+            let filters = [];
+            
+            // IP filters
+            const srcIP = document.getElementById('srcIP').value;
+            const dstIP = document.getElementById('dstIP').value;
+            const anyIP = document.getElementById('anyIP').value;
+            const excludeIP = document.getElementById('excludeIP').checked;
+            
+            if (anyIP) {
+                filters.push(`${excludeIP ? 'not ' : ''}host ${anyIP}`);
+            } else {
+                if (srcIP) {
+                    if (srcIP.includes('/')) {
+                        filters.push(`${excludeIP ? 'not ' : ''}src net ${srcIP}`);
+                    } else {
+                        filters.push(`${excludeIP ? 'not ' : ''}src host ${srcIP}`);
+                    }
+                }
+                if (dstIP) {
+                    if (dstIP.includes('/')) {
+                        filters.push(`${excludeIP ? 'not ' : ''}dst net ${dstIP}`);
+                    } else {
+                        filters.push(`${excludeIP ? 'not ' : ''}dst host ${dstIP}`);
+                    }
+                }
+            }
+            
+            // Port filters
+            const srcPort = document.getElementById('srcPort').value;
+            const dstPort = document.getElementById('dstPort').value;
+            const anyPort = document.getElementById('anyPort').value;
+            
+            if (anyPort) {
+                filters.push(`port ${anyPort}`);
+            } else {
+                if (srcPort) filters.push(`src port ${srcPort}`);
+                if (dstPort) filters.push(`dst port ${dstPort}`);
+            }
+            
+            // Protocol
+            const protocol = document.getElementById('protocol').value;
+            if (protocol) {
+                switch(protocol) {
+                    case 'bgp':
+                        filters.push('tcp port 179');
+                        break;
+                    case 'ospf':
+                        filters.push('proto ospf');
+                        break;
+                    case 'eigrp':
+                        filters.push('proto 88');
+                        break;
+                    case 'vxlan':
+                        filters.push('udp port 4789');
+                        break;
+                    case 'bfd':
+                        filters.push('udp port 3784');
+                        break;
+                    case 'ldp':
+                        filters.push('tcp port 646 or udp port 646');
+                        break;
+                    case 'ssh':
+                        filters.push('tcp port 22');
+                        break;
+                    case 'dhcp':
+                        filters.push('udp port 67 or udp port 68');
+                        break;
+                    case 'dns':
+                        filters.push('udp port 53 or tcp port 53');
+                        break;
+                    case 'ntp':
+                        filters.push('udp port 123');
+                        break;
+                    case 'snmp':
+                        filters.push('udp port 161 or udp port 162');
+                        break;
+                    default:
+                        filters.push(protocol);
+                }
+            }
+            
+            // VLAN
+            const vlan = document.getElementById('vlan').value;
+            if (vlan) filters.push(`vlan ${vlan}`);
+            
+            // MAC addresses
+            const macSrc = document.getElementById('macSrc').value;
+            const macDst = document.getElementById('macDst').value;
+            
+            if (macSrc) filters.push(`ether src ${macSrc}`);
+            if (macDst) filters.push(`ether dst ${macDst}`);
+            
+            // Packet size
+            const packetSize = document.getElementById('packetSize').value;
+            if (packetSize) filters.push(packetSize);
+            
+            // TCP flags
+            if (document.getElementById('protocol').value === 'tcp') {
+                let tcpFlags = [];
+                if (document.getElementById('tcpSyn').checked) tcpFlags.push('tcp[tcpflags] & tcp-syn != 0');
+                if (document.getElementById('tcpAck').checked) tcpFlags.push('tcp[tcpflags] & tcp-ack != 0');
+                if (document.getElementById('tcpFin').checked) tcpFlags.push('tcp[tcpflags] & tcp-fin != 0');
+                if (document.getElementById('tcpRst').checked) tcpFlags.push('tcp[tcpflags] & tcp-rst != 0');
+                if (document.getElementById('tcpPsh').checked) tcpFlags.push('tcp[tcpflags] & tcp-push != 0');
+                if (document.getElementById('tcpUrg').checked) tcpFlags.push('tcp[tcpflags] & tcp-urg != 0');
+                
+                if (tcpFlags.length > 0) {
+                    filters.push('(' + tcpFlags.join(' or ') + ')');
+                }
+            }
+            
+            return filters.join(' and ');
+        }
+        
+        function clearForm() {
+            document.getElementById('filterForm').reset();
+            document.getElementById('outputSection').style.display = 'none';
+        }
+        
+        function copyCommand() {
+            const command = document.getElementById('commandOutput').textContent;
+            navigator.clipboard.writeText(command).then(() => {
+                const btn = event.target;
+                btn.textContent = '✓ Copied!';
+                btn.classList.add('copied');
+                setTimeout(() => {
+                    btn.textContent = '📋 Copy';
+                    btn.classList.remove('copied');
+                }, 2000);
+            });
+        }
+        
+        function saveAsTemplate() {
+            const name = prompt('Enter template name:');
+            if (name) {
+                const command = document.getElementById('commandOutput').textContent;
+                alert(`Template "${name}" saved!\nCommand: ${command}`);
+            }
+        }
+        
+        function exportCommand() {
+            const command = document.getElementById('commandOutput').textContent;
+            const blob = new Blob([command], { type: 'text/plain' });
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'arista_capture.txt';
+            a.click();
+        }
+        
+        function updateCaptureMode() {
+            const mode = document.getElementById('captureMode').value;
+            if (mode === 'monitor') {
+                switchTab('monitor');
+            }
+        }
+        
+        function showProtocolOptions() {
+            const protocol = document.getElementById('protocol').value;
+            document.getElementById('tcpOptions').style.display = 
+                protocol === 'tcp' ? 'block' : 'none';
+        }
+        
+        // Visual Builder Functions
+        function addVisualCondition() {
+            visualConditionCount++;
+            const container = document.getElementById('visualConditions');
+            const newCondition = document.createElement('div');
+            newCondition.className = 'filter-condition';
+            newCondition.id = `condition${visualConditionCount}`;
+            newCondition.innerHTML = `
+                <select class="field-select" id="field${visualConditionCount}">
+                    <option value="">Select Field...</option>
+                    <option value="src">Source IP</option>
+                    <option value="dst">Destination IP</option>
+                    <option value="host">Any IP</option>
+                    <option value="net">Network</option>
+                    <option value="port">Any Port</option>
+                    <option value="src-port">Source Port</option>
+                    <option value="dst-port">Dest Port</option>
+                    <option value="proto">Protocol</option>
+                    <option value="vlan">VLAN</option>
+                    <option value="ether-src">Source MAC</option>
+                    <option value="ether-dst">Dest MAC</option>
+                    <option value="len">Packet Length</option>
+                </select>
+                <select class="operator-select" id="operator${visualConditionCount}">
+                    <option value="">is</option>
+                    <option value="not">is not</option>
+                    <option value="greater">greater than</option>
+                    <option value="less">less than</option>
+                </select>
+                <input type="text" class="value-input" id="value${visualConditionCount}" placeholder="Enter value...">
+                <select class="logic-operator" id="logic${visualConditionCount}">
+                    <option value="and">AND</option>
+                    <option value="or">OR</option>
+                </select>
+                <button class="remove-condition-btn" onclick="removeVisualCondition(${visualConditionCount})">×</button>
+            `;
+            container.appendChild(newCondition);
+        }
+        
+        function removeVisualCondition(id) {
+            document.getElementById(`condition${id}`).remove();
+        }
+        
+        function buildVisualFilter() {
+            const conditions = document.querySelectorAll('.filter-condition');
+            let filters = [];
+            
+            conditions.forEach((condition, index) => {
+                const field = condition.querySelector('.field-select').value;
+                const operator = condition.querySelector('.operator-select').value;
+                const value = condition.querySelector('.value-input').value;
+                const logic = condition.querySelector('.logic-operator').value;
+                
+                if (field && value) {
+                    let filterPart = '';
+                    
+                    switch(field) {
+                        case 'src':
+                            filterPart = `${operator === 'not' ? 'not ' : ''}src host ${value}`;
+                            break;
+                        case 'dst':
+                            filterPart = `${operator === 'not' ? 'not ' : ''}dst host ${value}`;
+                            break;
+                        case 'host':
+                            filterPart = `${operator === 'not' ? 'not ' : ''}host ${value}`;
+                            break;
+                        case 'net':
+                            filterPart = `${operator === 'not' ? 'not ' : ''}net ${value}`;
+                            break;
+                        case 'port':
+                            filterPart = `port ${value}`;
+                            break;
+                        case 'src-port':
+                            filterPart = `src port ${value}`;
+                            break;
+                        case 'dst-port':
+                            filterPart = `dst port ${value}`;
+                            break;
+                        case 'proto':
+                            filterPart = value;
+                            break;
+                        case 'vlan':
+                            filterPart = `vlan ${value}`;
+                            break;
+                        case 'ether-src':
+                            filterPart = `ether src ${value}`;
+                            break;
+                        case 'ether-dst':
+                            filterPart = `ether dst ${value}`;
+                            break;
+                        case 'len':
+                            if (operator === 'greater') {
+                                filterPart = `greater ${value}`;
+                            } else if (operator === 'less') {
+                                filterPart = `less ${value}`;
+                            }
+                            break;
+                    }
+                    
+                    if (filterPart) {
+                        if (filters.length > 0) {
+                            filters.push(logic);
+                        }
+                        filters.push(filterPart);
+                    }
+                }
+            });
+            
+            const filter = filters.join(' ');
+            const command = `tcpdump -i any -n '${filter}'`;
+            
+            document.getElementById('visualCommandOutput').textContent = command;
+            document.getElementById('visualOutput').style.display = 'block';
+        }
+        
+        function copyVisualCommand() {
+            const command = document.getElementById('visualCommandOutput').textContent;
+            navigator.clipboard.writeText(command).then(() => {
+                event.target.textContent = '✓ Copied!';
+                setTimeout(() => {
+                    event.target.textContent = '📋 Copy';
+                }, 2000);
+            });
+        }
+        
+        // Monitor Session Functions
+        function updateSessionType() {
+            const type = document.getElementById('sessionType').value;
+            document.getElementById('erspanOptions').style.display = 
+                type === 'erspan' ? 'block' : 'none';
+        }
+        
+        function generateMonitorSession() {
+            const sessionName = document.getElementById('sessionName').value || 'capture1';
+            const sessionType = document.getElementById('sessionType').value;
+            const sourceInterface = document.getElementById('sourceInterface').value;
+            const destInterface = document.getElementById('destInterface').value;
+            const direction = document.getElementById('monitorDirection').value;
+            
+            let config = [];
+            config.push('configure');
+            config.push(`monitor session ${sessionName}`);
+            
+            if (sourceInterface) {
+                const sourceDirection = direction === 'both' ? 'both' : direction;
+                config.push(`source ${sourceInterface} ${sourceDirection}`);
+            }
+            
+            if (sessionType === 'span') {
+                config.push(`destination ${destInterface}`);
+            } else if (sessionType === 'erspan') {
+                const erspanSource = document.getElementById('erspanSource').value;
+                const erspanDest = document.getElementById('erspanDest').value;
+                const erspanId = document.getElementById('erspanId').value || '1';
+                
+                config.push(`destination tunnel mode erspan`);
+                config.push(`source ip ${erspanSource}`);
+                config.push(`destination ip ${erspanDest}`);
+                config.push(`erspan-id ${erspanId}`);
+            }
+            
+            const monitorACL = document.getElementById('monitorACL').value;
+            if (monitorACL) {
+                config.push(`filter ip access-list ${monitorACL}`);
+            }
+            
+            config.push('no shutdown');
+            config.push('exit');
+            config.push('exit');
+            config.push('');
+            config.push('! To view the session:');
+            config.push(`show monitor session ${sessionName}`);
+            
+            document.getElementById('monitorCommandOutput').textContent = config.join('\n');
+            document.getElementById('monitorOutput').style.display = 'block';
+        }
+        
+        function clearMonitorForm() {
+            document.getElementById('sessionName').value = '';
+            document.getElementById('sourceInterface').value = '';
+            document.getElementById('destInterface').value = '';
+            document.getElementById('monitorOutput').style.display = 'none';
+        }
+    </script>
+</body>
+</html>
