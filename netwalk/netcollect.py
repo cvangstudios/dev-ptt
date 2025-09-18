@@ -1,29 +1,13 @@
 #!/usr/bin/env python3
 """
-Network Device Collector with TextFSM CDP/LLDP Parsing
+Network Device Collector using NTC Templates
 Collects and parses MAC tables, ARP tables, CDP/LLDP neighbors, and VLANs
-Correlates MAC and ARP data for complete visibility
+Uses NTC-templates for parsing, which are well-tested TextFSM templates
 
-CDP PARSING:
-- Device ID: Full device name including domain/serial (everything after "Device ID:")
-- Platform: Hardware info (from "Platform:" to first comma)
-- Local Interface: From "Interface:" to first comma
-- Remote Interface: Everything after "(outgoing port):"
-- Version: All lines between "Version:" and "advertisement version:"
-- Native VLAN: Value after "Native VLAN:"
-- Duplex: Value after "Duplex:"
-- IP Address: IPv4 address after "IP address:"
-
-LLDP PARSING:
-- System Name: Full name after "System Name:"
-- Port ID: Remote interface after "Port id:"
-- Management Address: IP address
-- System Description: Platform information
-
-TROUBLESHOOTING:
-- Check *_raw.txt files for actual command output
-- Check *_textfsm_debug.json for TextFSM parsed fields
-- The script uses fallback regex parsers if TextFSM fails
+Required packages:
+- pip install netmiko
+- pip install ntc-templates
+- pip install textfsm
 """
 
 from netmiko import ConnectHandler, NetmikoAuthenticationException, NetmikoTimeoutException
@@ -40,20 +24,18 @@ PASSWORD = "your_password"
 DEVICE_LIST = "devices.txt"  # One IP per line
 
 def detect_device_type(conn):
-    """Detect if device is IOS, NX-OS, or EOS with enhanced detection"""
+    """Detect if device is IOS, NX-OS, or EOS"""
     print("  Detecting device type...")
     
     # Get version information
     version_output = ""
     device_type = conn.device_type  # Start with what Netmiko detected
     
-    # Try 'show version' command
     try:
         version_output = conn.send_command('show version', delay_factor=2)
     except:
         pass
     
-    # Convert to uppercase for case-insensitive matching
     version_upper = version_output.upper()
     
     # Check for NX-OS (highest priority as it's often misdetected)
@@ -77,674 +59,339 @@ def detect_device_type(conn):
         device_type = 'cisco_ios'
         print("    Detected: Cisco IOS")
     else:
-        # Try to detect based on prompt format if version didn't help
-        prompt = conn.find_prompt()
-        if '#' in prompt:
-            if '%' in prompt or 'nexus' in prompt.lower():
-                device_type = 'cisco_nxos'
-                print("    Detected: Cisco NX-OS (based on prompt)")
-            else:
-                device_type = 'cisco_ios'
-                print("    Detected: Cisco IOS (based on prompt)")
-        else:
-            print(f"    Using default: {device_type}")
+        print(f"    Using default: {device_type}")
     
     # Update the connection's device type
     conn.device_type = device_type
     return device_type, version_output
 
-def get_mac_table_command(device_type):
-    """Get the appropriate MAC table command for device type"""
-    if device_type == 'cisco_nxos':
-        # NX-OS uses 'show mac address-table'
-        return 'show mac address-table'
-    elif device_type == 'arista_eos':
-        # Arista uses 'show mac address-table'
-        return 'show mac address-table'
-    elif device_type == 'cisco_xr':
-        # IOS-XR might use different command
-        return 'show mac address-table'
-    else:  # cisco_ios and others
-        # IOS can use either, but this is most common
-        return 'show mac address-table'
-
-def parse_cdp_neighbors(cdp_output, device_type):
-    """Parse CDP neighbors using TextFSM with improved fallback"""
-    neighbors = []
+def extract_system_name(device_id, strip_domains=[]):
+    """
+    Extract hostname from CDP Device ID field
+    Handles formats like:
+    - Hostname
+    - Hostname.domain.com
+    - Hostname(SerialNumber)
+    - SerialNumber(Hostname)
+    """
+    if not device_id:
+        return device_id
     
-    if not cdp_output or 'CDP is not enabled' in cdp_output:
-        return neighbors
+    hostname = device_id
+    
+    # Handle Hostname(Serial) format
+    if '(' in hostname:
+        hostname = hostname.split('(')[0].strip()
+    
+    # Strip configured domains
+    for domain in strip_domains:
+        if hostname.endswith(domain):
+            hostname = hostname[:-(len(domain))].rstrip('.')
+    
+    # Also remove any .local, .lan, etc if not in strip list
+    if '.' in hostname and not re.match(r'^\d+\.\d+\.\d+\.\d+', hostname):
+        # It's not an IP, so remove domain
+        hostname = hostname.split('.')[0]
+    
+    return hostname.strip()
+
+def correlate_mac_arp(mac_data, arp_data):
+    """Correlate MAC and ARP tables to create unified view"""
+    correlated = []
+    
+    # Create lookup dictionary
+    arp_by_mac = {}
+    for arp in arp_data:
+        mac = arp.get('mac', '').lower().replace(':', '').replace('.', '').replace('-', '')
+        if mac:
+            arp_by_mac[mac] = arp
+    
+    # Process MAC entries
+    for mac_entry in mac_data:
+        mac_addr = mac_entry.get('mac', '').lower().replace(':', '').replace('.', '').replace('-', '')
+        
+        entry = {
+            'vlan': mac_entry.get('vlan', ''),
+            'mac': mac_entry.get('mac', ''),
+            'type': mac_entry.get('type', ''),
+            'interface': mac_entry.get('interface', ''),
+            'ip': '',
+            'arp_interface': ''
+        }
+        
+        # Look for matching ARP entry
+        if mac_addr in arp_by_mac:
+            arp_entry = arp_by_mac[mac_addr]
+            entry['ip'] = arp_entry.get('ip', '')
+            entry['arp_interface'] = arp_entry.get('interface', '')
+        
+        correlated.append(entry)
+    
+    # Add ARP entries without matching MAC
+    processed_macs = set(m.get('mac', '').lower().replace(':', '').replace('.', '').replace('-', '') 
+                        for m in mac_data if m.get('mac'))
+    
+    for arp_entry in arp_data:
+        mac_addr = arp_entry.get('mac', '').lower().replace(':', '').replace('.', '').replace('-', '')
+        if mac_addr and mac_addr not in processed_macs:
+            entry = {
+                'vlan': '',
+                'mac': arp_entry.get('mac', ''),
+                'type': 'ARP-only',
+                'interface': '',
+                'ip': arp_entry.get('ip', ''),
+                'arp_interface': arp_entry.get('interface', '')
+            }
+            correlated.append(entry)
+    
+    return correlated
+
+def collect_from_device(ip, username, password):
+    """Collect data from one device"""
+    print(f"\nConnecting to {ip}...")
+    
+    # Initial connection parameters
+    device = {
+        'device_type': 'autodetect',
+        'ip': ip,
+        'username': username,
+        'password': password,
+        'timeout': 30,
+        'global_delay_factor': 2,
+    }
     
     try:
-        # Use NTC templates to parse CDP output
-        parsed = parse_output(platform=device_type, command='show cdp neighbors detail', data=cdp_output)
+        # Try autodetect first
+        try:
+            from netmiko import SSHDetect
+            guesser = SSHDetect(**device)
+            best_match = guesser.autodetect()
+            device['device_type'] = best_match
+            print(f"  Auto-detected: {best_match}")
+        except:
+            device['device_type'] = 'cisco_ios'
+            print("  Auto-detect failed, using cisco_ios")
         
-        if parsed and isinstance(parsed, list):
-            for entry in parsed:
-                # Handle different field names from different templates
-                neighbor = {
-                    'protocol': 'CDP',
-                    'local_interface': entry.get('local_port', entry.get('local_interface', '')),
-                    'neighbor_device': entry.get('destination_host', entry.get('device_id', entry.get('neighbor', ''))),
-                    'neighbor_interface': entry.get('remote_port', entry.get('neighbor_interface', entry.get('port_id', ''))),
-                    'neighbor_ip': entry.get('management_ip', entry.get('ip_address', entry.get('ip', ''))),
-                    'platform': entry.get('platform', entry.get('system_name', '')),
-                    'software_version': entry.get('software_version', entry.get('version', '')),
-                    'native_vlan': entry.get('native_vlan', ''),
-                    'duplex': entry.get('duplex', '')
-                }
-                
-                # Don't clean up device name - keep it as-is
-                
-                # Only add if we have at least a device name or IP
-                if neighbor['neighbor_device'] or neighbor['neighbor_ip']:
-                    neighbors.append(neighbor)
-            
-            if neighbors:
-                print(f"      Parsed {len(neighbors)} CDP neighbors with TextFSM")
-            else:
-                print(f"      TextFSM returned empty results, trying fallback parser")
-                neighbors = parse_cdp_basic(cdp_output)
-        else:
-            print(f"      TextFSM parsing returned no data, trying fallback parser")
-            neighbors = parse_cdp_basic(cdp_output)
-            
-    except Exception as e:
-        print(f"      TextFSM parsing failed: {str(e)[:100]}, trying fallback parser")
-        neighbors = parse_cdp_basic(cdp_output)
-    
-    return neighbors
-
-def parse_cdp_basic(output):
-    """Basic CDP parsing - only parse required fields"""
-    neighbors = []
-    current = {}
-    in_version = False
-    version_lines = []
-    
-    for line in output.split('\n'):
-        # Device ID - grab everything after "Device ID:" until end of line
-        if 'Device ID:' in line:
-            # Save previous entry if exists
-            if current and 'neighbor_device' in current:
-                # Add version if we collected it
-                if version_lines:
-                    current['software_version'] = '\n'.join(version_lines).strip()
-                neighbors.append(current)
-            
-            # Start new entry - grab EVERYTHING after "Device ID:"
-            device_name = line.split('Device ID:', 1)[1].strip()
-            
-            current = {
-                'protocol': 'CDP',
-                'neighbor_device': device_name,  # Keep full device ID
-                'neighbor_ip': '',
-                'neighbor_interface': '',
-                'local_interface': '',
-                'platform': '',
-                'software_version': '',
-                'native_vlan': '',
-                'duplex': ''
-            }
-            in_version = False
-            version_lines = []
+        # Connect
+        conn = ConnectHandler(**device)
+        hostname = conn.find_prompt().strip('#>')
         
-        # Only parse if we have a current device
-        elif current:
-            # Platform - grab from after "Platform:" to first comma
-            if 'Platform:' in line:
-                platform_line = line.split('Platform:', 1)[1]
-                # Get hardware info (everything before first comma)
-                if ',' in platform_line:
-                    current['platform'] = platform_line.split(',')[0].strip()
-                else:
-                    current['platform'] = platform_line.strip()
-            
-            # Interface parsing
-            elif 'Interface:' in line:
-                # Get local interface: from after "Interface:" to first comma
-                interface_line = line.split('Interface:', 1)[1]
-                if ',' in interface_line:
-                    current['local_interface'] = interface_line.split(',')[0].strip()
+        # Detect specific device type
+        device_type, version_output = detect_device_type(conn)
+        
+        print(f"  Connected to {hostname} (type: {device_type})")
+        
+        # Create output folder
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        safe_hostname = re.sub(r'[^\w\-_]', '_', hostname)
+        output_dir = Path(f"network_data/{safe_hostname}_{ip}_{timestamp}")
+        output_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Save version info
+        with open(output_dir / 'version.txt', 'w') as f:
+            f.write(version_output)
+        
+        # ========== MAC TABLE ==========
+        print("  Getting MAC table...")
+        mac_commands = [
+            'show mac address-table',
+            'show mac-address-table',
+            'show mac address-table dynamic'
+        ]
+        
+        mac_data = []
+        for cmd in mac_commands:
+            try:
+                mac_output = conn.send_command(cmd, delay_factor=2)
+                if 'Invalid' not in mac_output and 'Error' not in mac_output:
+                    with open(output_dir / 'mac_table_raw.txt', 'w') as f:
+                        f.write(mac_output)
                     
-                    # Get remote interface: everything after "(outgoing port):"
-                    if '(outgoing port):' in interface_line:
-                        remote = interface_line.split('(outgoing port):', 1)[1].strip()
-                        current['neighbor_interface'] = remote
-                else:
-                    current['local_interface'] = interface_line.strip()
-            
-            # IPv4 address
-            elif 'IP address:' in line:
-                if ':' in line:
-                    ip = line.split(':', 1)[1].strip()
-                    # Validate it's an IP
-                    if re.match(r'\d+\.\d+\.\d+\.\d+', ip):
-                        current['neighbor_ip'] = ip
-            
-            # Native VLAN
-            elif 'Native VLAN:' in line:
-                vlan = line.split('Native VLAN:', 1)[1].strip()
-                current['native_vlan'] = vlan
-            
-            # Duplex
-            elif 'Duplex:' in line:
-                duplex = line.split('Duplex:', 1)[1].strip()
-                current['duplex'] = duplex
-            
-            # Version handling - start collecting
-            elif 'Version :' in line or 'Version:' in line:
-                in_version = True
-                version_lines = []
-                # Sometimes version is on same line after colon
-                if ':' in line:
-                    version_start = line.split(':', 1)[1].strip()
-                    if version_start and version_start.lower() != 'version':
-                        version_lines.append(version_start)
-            
-            # Stop collecting version when we hit advertisement version
-            elif 'advertisement version:' in line.lower():
-                in_version = False
-            
-            # Collect version lines between Version and advertisement version
-            elif in_version and line.strip():
-                version_lines.append(line.strip())
-    
-    # Don't forget the last entry
-    if current and 'neighbor_device' in current:
-        if version_lines:
-            current['software_version'] = '\n'.join(version_lines).strip()
-        neighbors.append(current)
-    
-    # Clean up empty entries
-    neighbors = [n for n in neighbors if n.get('neighbor_device')]
-    
-    if neighbors:
-        print(f"      Parsed {len(neighbors)} CDP neighbors with basic parser")
-        # Debug: show what we found
-        for n in neighbors:
-            print(f"        - {n.get('neighbor_device', 'Unknown')} on {n.get('local_interface', 'Unknown')}")
-    else:
-        print("      No CDP neighbors found in output")
-    
-    return neighbors_version': ''
-                }
+                    # Parse with NTC templates
+                    parsed = parse_output(platform=device_type, command=cmd, data=mac_output)
+                    if parsed:
+                        for entry in parsed:
+                            mac_data.append({
+                                'vlan': entry.get('vlan', ''),
+                                'mac': entry.get('destination_address', entry.get('mac', '')),
+                                'type': entry.get('type', 'dynamic'),
+                                'interface': entry.get('destination_port', entry.get('interface', ''))
+                            })
+                        print(f"    Parsed {len(mac_data)} MAC entries")
+                        break
+            except:
+                continue
         
-        # Parse other fields only if we have a current device
-        elif current:
-            if 'IP address' in line or 'IPv4 Address' in line:
-                # Handle "IP address: x.x.x.x" or "IPv4 Address: x.x.x.x"
-                if ':' in line:
-                    ip = line.split(':', 1)[1].strip()
-                    if re.match(r'\d+\.\d+\.\d+\.\d+$', ip):
-                        current['neighbor_ip'] = ip
+        if mac_data:
+            with open(output_dir / 'mac_table.csv', 'w', newline='') as f:
+                writer = csv.DictWriter(f, fieldnames=['vlan', 'mac', 'type', 'interface'])
+                writer.writeheader()
+                writer.writerows(mac_data)
+        
+        # ========== ARP TABLE ==========
+        print("  Getting ARP table...")
+        arp_output = conn.send_command('show ip arp', delay_factor=2)
+        with open(output_dir / 'arp_table_raw.txt', 'w') as f:
+            f.write(arp_output)
+        
+        arp_data = []
+        try:
+            parsed = parse_output(platform=device_type, command='show ip arp', data=arp_output)
+            if parsed:
+                for entry in parsed:
+                    arp_data.append({
+                        'ip': entry.get('address', entry.get('ip', '')),
+                        'mac': entry.get('mac', ''),
+                        'interface': entry.get('interface', '')
+                    })
+                print(f"    Parsed {len(arp_data)} ARP entries")
+        except:
+            print("    ARP parsing failed")
+        
+        if arp_data:
+            with open(output_dir / 'arp_table.csv', 'w', newline='') as f:
+                writer = csv.DictWriter(f, fieldnames=['ip', 'mac', 'interface'])
+                writer.writeheader()
+                writer.writerows(arp_data)
+        
+        # ========== CORRELATE MAC/ARP ==========
+        if mac_data and arp_data:
+            print("  Correlating MAC and ARP tables...")
+            correlated_data = correlate_mac_arp(mac_data, arp_data)
             
-            elif 'Platform' in line:
-                # Parse platform and capabilities
-                if ':' in line:
-                    platform_info = line.split(':', 1)[1].strip()
-                    # Split by comma to separate platform from capabilities
-                    parts = platform_info.split(',')
-                    if parts:
-                        current['platform'] = parts[0].strip()
-                    # Look for Capabilities
-                    if 'Capabilities' in platform_info:
-                        cap_parts = platform_info.split('Capabilities')
-                        if len(cap_parts) > 1:
-                            current['capabilities'] = cap_parts[1].strip().lstrip(':').strip()
-            
-            elif 'Interface' in line:
-                # Parse local and remote interfaces
-                # Format: "Interface: GigabitEthernet0/0,  Port ID (outgoing port): GigabitEthernet0/0"
-                if ':' in line:
-                    int_info = line.split(':', 1)[1].strip()
-                    
-                    # Get local interface (before comma)
-                    if ',' in int_info:
-                        local_int = int_info.split(',')[0].strip()
-                        current['local_interface'] = local_int
+            with open(output_dir / 'mac_arp_correlated.csv', 'w', newline='') as f:
+                writer = csv.DictWriter(f, fieldnames=['vlan', 'mac', 'type', 'interface', 'ip', 'arp_interface'])
+                writer.writeheader()
+                writer.writerows(correlated_data)
+            print(f"    Created correlated table with {len(correlated_data)} entries")
+        
+        # ========== CDP NEIGHBORS ==========
+        all_neighbors = []
+        print("  Getting CDP neighbors...")
+        
+        cdp_output = conn.send_command('show cdp neighbors detail', delay_factor=3)
+        with open(output_dir / 'cdp_neighbors_raw.txt', 'w') as f:
+            f.write(cdp_output)
+        
+        if 'CDP is not enabled' not in cdp_output:
+            try:
+                parsed = parse_output(platform=device_type, command='show cdp neighbors detail', data=cdp_output)
+                if parsed:
+                    for entry in parsed:
+                        neighbor = {
+                            'protocol': 'CDP',
+                            'local_interface': entry.get('local_port', ''),
+                            'neighbor_device': extract_system_name(entry.get('device_id', '')),
+                            'neighbor_interface': entry.get('remote_port', ''),
+                            'neighbor_ip': entry.get('management_ip', ''),
+                            'platform': entry.get('platform', ''),
+                            'software_version': entry.get('software_version', ''),
+                            'capabilities': entry.get('capabilities', ''),
+                            'vtp_domain': entry.get('vtp_domain', ''),
+                            'native_vlan': entry.get('native_vlan', ''),
+                            'duplex': entry.get('duplex', '')
+                        }
                         
-                        # Get remote interface (after "Port ID")
-                        if 'Port ID' in int_info:
-                            port_parts = int_info.split('Port ID')
-                            if len(port_parts) > 1:
-                                remote_int = port_parts[1].strip()
-                                # Remove "(outgoing port)" and colons
-                                remote_int = remote_int.replace('(outgoing port)', '')
-                                remote_int = remote_int.replace(':', '').strip()
-                                current['neighbor_interface'] = remote_int
-                    else:
-                        # No comma, just local interface
-                        current['local_interface'] = int_info.strip()
-            
-            elif 'Version' in line and ':' in line:
-                # Get software version
-                version = line.split(':', 1)[1].strip()
-                # Take first line of version if multiline
-                if version:
-                    current['software_version'] = version.split('\n')[0].strip()
-    
-    # Don't forget the last entry
-    if current and 'neighbor_device' in current:
-        neighbors.append(current)
-    
-    # Clean up empty entries
-    neighbors = [n for n in neighbors if n.get('neighbor_device')]
-    
-    if neighbors:
-        print(f"      Parsed {len(neighbors)} CDP neighbors with basic parser")
-    else:
-        print("      No CDP neighbors found in output")
-    
-    return neighbors
-
-def parse_lldp_neighbors(lldp_output, device_type):
-    """Parse LLDP neighbors using TextFSM with improved fallback"""
-    neighbors = []
-    
-    if not lldp_output or 'LLDP is not enabled' in lldp_output:
-        return neighbors
-    
-    try:
-        # Use NTC templates to parse LLDP output
-        parsed = parse_output(platform=device_type, command='show lldp neighbors detail', data=lldp_output)
+                        # Handle IP lists (some templates return lists)
+                        if isinstance(neighbor['neighbor_ip'], list):
+                            neighbor['neighbor_ip'] = ', '.join(neighbor['neighbor_ip'])
+                        
+                        all_neighbors.append(neighbor)
+                    
+                    print(f"    Parsed {len(parsed)} CDP neighbors")
+            except Exception as e:
+                print(f"    CDP parsing failed: {e}")
         
-        if parsed and isinstance(parsed, list):
-            for entry in parsed:
-                # Handle different field names from different templates
-                neighbor = {
-                    'protocol': 'LLDP',
-                    'local_interface': entry.get('local_interface', entry.get('local_port', entry.get('local_intf', ''))),
-                    'neighbor_device': entry.get('neighbor', entry.get('system_name', entry.get('device_id', ''))),
-                    'neighbor_interface': entry.get('neighbor_port_id', entry.get('remote_port', entry.get('port_id', ''))),
-                    'neighbor_ip': entry.get('management_address', entry.get('management_ip', entry.get('mgmt_address', ''))),
-                    'platform': entry.get('system_description', entry.get('platform', entry.get('description', ''))),
-                    'software_version': entry.get('software_version', ''),
-                    'native_vlan': '',  # LLDP doesn't typically have native VLAN
-                    'duplex': ''  # LLDP doesn't typically have duplex
-                }
-                
-                # Don't clean up device name - keep as-is
-                
-                # Only add if we have at least a device name or IP
-                if neighbor['neighbor_device'] or neighbor['neighbor_ip']:
-                    neighbors.append(neighbor)
-            
-            if neighbors:
-                print(f"      Parsed {len(neighbors)} LLDP neighbors with TextFSM")
-            else:
-                print(f"      TextFSM returned empty results, trying fallback parser")
-                neighbors = parse_lldp_basic(lldp_output)
-        else:
-            print(f"      TextFSM parsing returned no data, trying fallback parser")
-            neighbors = parse_lldp_basic(lldp_output)
-            
-    except Exception as e:
-        print(f"      TextFSM parsing failed: {str(e)[:100]}, trying fallback parser")
-        neighbors = parse_lldp_basic(lldp_output)
-    
-    return neighbors
-
-def parse_lldp_basic(output):
-    """Basic LLDP parsing - simplified for required fields only"""
-    neighbors = []
-    current = {}
-    
-    for line in output.split('\n'):
-        # Check for start of new neighbor - various formats
-        if 'Local Intf' in line or 'Local Interface' in line:
-            # Save previous entry if exists
-            if current and 'neighbor_device' in current:
-                neighbors.append(current)
-            
-            # Extract local interface
-            local_int = ''
-            if ':' in line:
-                local_int = line.split(':', 1)[1].strip()
-            else:
-                # Sometimes format is "Local Intf: Gi0/0" or just has the interface after
-                parts = re.split(r'Local Intf(?:erface)?[:\s]+', line)
-                if len(parts) > 1:
-                    local_int = parts[1].strip()
-            
-            if local_int:
-                current = {
-                    'protocol': 'LLDP',
-                    'local_interface': local_int,
-                    'neighbor_device': '',
-                    'neighbor_interface': '',
-                    'neighbor_ip': '',
-                    'platform': '',
-                    'software_version': '',
-                    'native_vlan': '',  # LLDP doesn't have native VLAN
-                    'duplex': ''  # LLDP doesn't have duplex
-                }
-        
-        # Parse other fields
-        elif current:
-            # System Name (neighbor hostname)
-            if 'System Name' in line or 'SysName' in line:
-                if ':' in line:
-                    name = line.split(':', 1)[1].strip()
-                    current['neighbor_device'] = name  # Keep full name
-            
-            # Port ID (neighbor interface)
-            elif 'Port id' in line or 'PortId' in line or 'Port ID' in line:
-                if ':' in line:
-                    port = line.split(':', 1)[1].strip()
-                    # Clean up port name
-                    port = port.replace('"', '').strip()
-                    current['neighbor_interface'] = port
-            
-            # Port Description (sometimes has useful info)
-            elif 'Port Description' in line or 'PortDescr' in line:
-                if ':' in line and not current.get('neighbor_interface'):
-                    # Sometimes port description has the actual port
-                    port_desc = line.split(':', 1)[1].strip()
-                    if port_desc and len(port_desc) < 50:  # Reasonable length for interface name
-                        current['neighbor_interface'] = port_desc
-            
-            # Management Address (IP)
-            elif 'Management Address' in line or 'MgmtAddress' in line:
-                # IP might be on same line or next line
-                if ':' in line:
-                    addr_part = line.split(':', 1)[1].strip()
-                    # Look for IP pattern
-                    ip_match = re.search(r'(\d+\.\d+\.\d+\.\d+)', addr_part)
-                    if ip_match:
-                        current['neighbor_ip'] = ip_match.group(1)
-            
-            # Check for standalone IP line (sometimes IP is on next line)
-            elif re.match(r'^\s*\d+\.\d+\.\d+\.\d+\s*
-
-def correlate_mac_arp(mac_data, arp_data):
-    """Correlate MAC and ARP tables to create unified view"""
-    correlated = []
-    
-    # Create lookup dictionaries
-    arp_by_mac = {}
-    for arp in arp_data:
-        mac = arp.get('mac', '').lower()
-        if mac:
-            arp_by_mac[mac] = arp
-    
-    # Correlate MAC entries with ARP
-    for mac_entry in mac_data:
-        mac_addr = mac_entry.get('mac', '').lower()
-        entry = {
-            'vlan': mac_entry.get('vlan', ''),
-            'mac': mac_entry.get('mac', ''),
-            'type': mac_entry.get('type', ''),
-            'interface': mac_entry.get('interface', ''),
-            'ip': '',
-            'arp_interface': ''
-        }
-        
-        # Look for matching ARP entry
-        if mac_addr in arp_by_mac:
-            arp_entry = arp_by_mac[mac_addr]
-            entry['ip'] = arp_entry.get('ip', '')
-            entry['arp_interface'] = arp_entry.get('interface', '')
-        
-        correlated.append(entry)
-    
-    # Add ARP entries without matching MAC
-    processed_macs = set(m.get('mac', '').lower() for m in mac_data)
-    for arp_entry in arp_data:
-        mac_addr = arp_entry.get('mac', '').lower()
-        if mac_addr and mac_addr not in processed_macs:
-            entry = {
-                'vlan': '',
-                'mac': arp_entry.get('mac', ''),
-                'type': 'ARP-only',
-                'interface': '',
-                'ip': arp_entry.get('ip', ''),
-                'arp_interface': arp_entry.get('interface', '')
-            }
-            correlated.append(entry)
-    
-    return correlated
-
-def collect_from_device(ip, username, password):
-    """Collect data from one device"""
-    print(f"\nConnecting to {ip}...")
-    
-    # Initial connection parameters
-    device = {
-        'device_type': 'autodetect',  # Let Netmiko auto-detect
-        'ip': ip,
-        'username': username,
-        'password': password,
-        'timeout': 30,
-        'global_delay_factor': 2,
-    }
-    
-    try:
-        # Try autodetect first
-        try:
-            from netmiko import SSHDetect
-            guesser = SSHDetect(**device)
-            best_match = guesser.autodetect()
-            device['device_type'] = best_match
-            print(f"  Auto-detected: {best_match}")
-        except:
-            # Fallback to cisco_ios if autodetect fails
-            device['device_type'] = 'cisco_ios'
-            print("  Auto-detect failed, using cisco_ios")
-        
-        # Connect
-        conn = ConnectHandler(**device)
-        hostname = conn.find_prompt().strip('#>')
-        
-        # Detect specific device type
-        device_type, version_output = detect_device_type(conn)
-        
-        print(f"  Connected to {hostname} (type: {device_type})")
-        
-        # Create output folder
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        safe_hostname = re.sub(r'[^\w\-_]', '_', hostname)
-        output_dir = Path(f"network_data/{safe_hostname}_{ip}_{timestamp}")
-        output_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Save version info
-        with open(output_dir / 'version.txt', 'w') as f:
-            f.write(version_output)
-        
-        # Collect MAC table
-        print("  Getting MAC table...")
-        mac_command = get_mac_table_command(device_type)
-        mac_output = conn.send_command(mac_command)
-        with open(output_dir / 'mac_table_raw.txt', 'w') as f:
-            f.write(mac_output)
-        
-        # Parse MAC table
-        mac_data = []
-        try:
-            parsed_mac = parse_output(platform=device_type, command=mac_command, data=mac_output)
-            if parsed_mac:
-                for entry in parsed_mac:
-                    mac_data.append({
-                        'vlan': entry.get('vlan', ''),
-                        'mac': entry.get('destination_address', entry.get('mac', '')),
-                        'type': entry.get('type', 'dynamic'),
-                        'interface': entry.get('destination_port', entry.get('ports', ''))
-                    })
-                print(f"    Parsed {len(mac_data)} MAC entries with TextFSM")
-        except Exception as e:
-            print(f"    TextFSM MAC parsing failed: {e}, using regex")
-            # Fallback to regex parsing
-            for line in mac_output.split('\n'):
-                match = re.search(r'(\d+)\s+([0-9a-f]{4}\.[0-9a-f]{4}\.[0-9a-f]{4})\s+(\w+)\s+(\S+)', line, re.I)
-                if match:
-                    mac_data.append({
-                        'vlan': match.group(1),
-                        'mac': match.group(2),
-                        'type': match.group(3),
-                        'interface': match.group(4)
-                    })
-        
-        # Collect ARP table
-        print("  Getting ARP table...")
-        arp_output = conn.send_command('show ip arp')
-        with open(output_dir / 'arp_table_raw.txt', 'w') as f:
-            f.write(arp_output)
-        
-        # Parse ARP
-        arp_data = []
-        try:
-            parsed_arp = parse_output(platform=device_type, command='show ip arp', data=arp_output)
-            if parsed_arp:
-                for entry in parsed_arp:
-                    arp_data.append({
-                        'ip': entry.get('address', entry.get('ip', '')),
-                        'mac': entry.get('mac', ''),
-                        'interface': entry.get('interface', '')
-                    })
-                print(f"    Parsed {len(arp_data)} ARP entries with TextFSM")
-        except Exception as e:
-            print(f"    TextFSM ARP parsing failed: {e}, using regex")
-            # Fallback to regex
-            for line in arp_output.split('\n'):
-                match = re.search(r'(\d+\.\d+\.\d+\.\d+)\s+\S+\s+([0-9a-f]{4}\.[0-9a-f]{4}\.[0-9a-f]{4})\s+\S+\s+(\S+)', line, re.I)
-                if match:
-                    arp_data.append({
-                        'ip': match.group(1),
-                        'mac': match.group(2),
-                        'interface': match.group(3)
-                    })
-        
-        # Save individual MAC and ARP tables
-        if mac_data:
-            with open(output_dir / 'mac_table.csv', 'w', newline='') as f:
-                writer = csv.DictWriter(f, fieldnames=['vlan', 'mac', 'type', 'interface'])
-                writer.writeheader()
-                writer.writerows(mac_data)
-        
-        if arp_data:
-            with open(output_dir / 'arp_table.csv', 'w', newline='') as f:
-                writer = csv.DictWriter(f, fieldnames=['ip', 'mac', 'interface'])
-                writer.writeheader()
-                writer.writerows(arp_data)
-        
-        # Correlate MAC and ARP tables
-        correlated_data = []  # Initialize
-        print("  Correlating MAC and ARP tables...")
-        correlated_data = correlate_mac_arp(mac_data, arp_data)
-        if correlated_data:
-            with open(output_dir / 'mac_arp_correlated.csv', 'w', newline='') as f:
-                writer = csv.DictWriter(f, fieldnames=['vlan', 'mac', 'type', 'interface', 'ip', 'arp_interface'])
-                writer.writeheader()
-                writer.writerows(correlated_data)
-            print(f"    Created correlated table with {len(correlated_data)} entries")
-        
-        # Collect CDP neighbors
-        all_neighbors = []
-        cdp_neighbors = []  # Initialize to empty list
-        print("  Getting CDP neighbors...")
-        try:
-            cdp_output = conn.send_command('show cdp neighbors detail', delay_factor=2)
-            with open(output_dir / 'cdp_neighbors_raw.txt', 'w') as f:
-                f.write(cdp_output)
-            
-            # Debug: save TextFSM parsed output to see what fields we get
-            try:
-                debug_parsed = parse_output(platform=device_type, command='show cdp neighbors detail', data=cdp_output)
-                if debug_parsed:
-                    with open(output_dir / 'cdp_textfsm_debug.json', 'w') as f:
-                        json.dump(debug_parsed, f, indent=2)
-                    print(f"    DEBUG: TextFSM CDP fields saved to cdp_textfsm_debug.json")
-            except:
-                pass
-            
-            cdp_neighbors = parse_cdp_neighbors(cdp_output, device_type)
-            all_neighbors.extend(cdp_neighbors)
-        except Exception as e:
-            print(f"    CDP collection failed: {e}")
-        
-        # Collect LLDP neighbors
+        # ========== LLDP NEIGHBORS ==========
         print("  Getting LLDP neighbors...")
-        try:
-            lldp_output = conn.send_command('show lldp neighbors detail', delay_factor=2)
-            with open(output_dir / 'lldp_neighbors_raw.txt', 'w') as f:
-                f.write(lldp_output)
-            
-            # Debug: save TextFSM parsed output to see what fields we get
-            try:
-                debug_parsed = parse_output(platform=device_type, command='show lldp neighbors detail', data=lldp_output)
-                if debug_parsed:
-                    with open(output_dir / 'lldp_textfsm_debug.json', 'w') as f:
-                        json.dump(debug_parsed, f, indent=2)
-                    print(f"    DEBUG: TextFSM LLDP fields saved to lldp_textfsm_debug.json")
-            except:
-                pass
-            
-            lldp_neighbors = parse_lldp_neighbors(lldp_output, device_type)
-            
-            # Deduplicate - only add LLDP entries that don't exist in CDP
-            cdp_interfaces = set(n.get('local_interface') for n in cdp_neighbors if n.get('local_interface'))
-            for lldp in lldp_neighbors:
-                if lldp.get('local_interface') not in cdp_interfaces:
-                    all_neighbors.append(lldp)
-        except Exception as e:
-            print(f"    LLDP collection failed: {e}")
         
-        # Save all neighbors to CSV
+        lldp_output = conn.send_command('show lldp neighbors detail', delay_factor=3)
+        with open(output_dir / 'lldp_neighbors_raw.txt', 'w') as f:
+            f.write(lldp_output)
+        
+        if 'LLDP is not enabled' not in lldp_output:
+            try:
+                parsed = parse_output(platform=device_type, command='show lldp neighbors detail', data=lldp_output)
+                if parsed:
+                    # Check if we already have CDP data for these interfaces
+                    cdp_interfaces = set(n['local_interface'] for n in all_neighbors if n.get('protocol') == 'CDP')
+                    
+                    for entry in parsed:
+                        local_int = entry.get('local_interface', entry.get('local_port', ''))
+                        
+                        # Skip if we already have CDP data for this interface
+                        if local_int not in cdp_interfaces:
+                            neighbor = {
+                                'protocol': 'LLDP',
+                                'local_interface': local_int,
+                                'neighbor_device': entry.get('neighbor', entry.get('system_name', '')),
+                                'neighbor_interface': entry.get('neighbor_port_id', entry.get('remote_port', '')),
+                                'neighbor_ip': entry.get('management_address', ''),
+                                'platform': entry.get('system_description', ''),
+                                'software_version': '',
+                                'capabilities': entry.get('capabilities', ''),
+                                'vtp_domain': '',
+                                'native_vlan': '',
+                                'duplex': ''
+                            }
+                            
+                            # Handle IP lists
+                            if isinstance(neighbor['neighbor_ip'], list):
+                                neighbor['neighbor_ip'] = ', '.join(neighbor['neighbor_ip'])
+                            
+                            all_neighbors.append(neighbor)
+                    
+                    print(f"    Parsed {len(parsed)} LLDP neighbors")
+            except Exception as e:
+                print(f"    LLDP parsing failed: {e}")
+        
+        # Save neighbors to CSV
         if all_neighbors:
-            # Get all unique fields from neighbors
-            all_fields = set()
-            for neighbor in all_neighbors:
-                all_fields.update(neighbor.keys())
-            
-            fieldnames = sorted(list(all_fields))
+            fieldnames = ['protocol', 'local_interface', 'neighbor_device', 'neighbor_interface', 
+                         'neighbor_ip', 'platform', 'software_version', 'capabilities',
+                         'vtp_domain', 'native_vlan', 'duplex']
             
             with open(output_dir / 'neighbors.csv', 'w', newline='') as f:
                 writer = csv.DictWriter(f, fieldnames=fieldnames)
                 writer.writeheader()
                 writer.writerows(all_neighbors)
             
-            print(f"    Found {len(all_neighbors)} total neighbors (CDP+LLDP)")
+            print(f"    Found {len(all_neighbors)} total neighbors")
             
-            # Also save as JSON for easier processing
+            # Also save as JSON
             with open(output_dir / 'neighbors.json', 'w') as f:
                 json.dump(all_neighbors, f, indent=2)
-        else:
-            print("    WARNING: No neighbors found!")
         
-        # Collect VLANs
+        # ========== VLANs ==========
         print("  Getting VLANs...")
-        vlan_output = conn.send_command('show vlan')
-        with open(output_dir / 'vlans_raw.txt', 'w') as f:
-            f.write(vlan_output)
+        vlan_commands = ['show vlan', 'show vlan brief']
         
-        # Parse VLANs
         vlan_data = []
-        try:
-            parsed_vlans = parse_output(platform=device_type, command='show vlan', data=vlan_output)
-            if parsed_vlans:
-                for entry in parsed_vlans:
-                    interfaces = entry.get('interfaces', [])
-                    if isinstance(interfaces, list):
-                        interfaces = ', '.join(interfaces)
-                    vlan_data.append({
-                        'vlan_id': entry.get('vlan_id', ''),
-                        'name': entry.get('name', ''),
-                        'status': entry.get('status', 'active'),
-                        'interfaces': interfaces
-                    })
-                print(f"    Parsed {len(vlan_data)} VLANs with TextFSM")
-        except Exception as e:
-            print(f"    TextFSM VLAN parsing failed: {e}, using regex")
-            # Basic parsing
-            for line in vlan_output.split('\n'):
-                match = re.search(r'^(\d+)\s+(\S+)\s+(\w+)', line)
-                if match:
-                    vlan_data.append({
-                        'vlan_id': match.group(1),
-                        'name': match.group(2),
-                        'status': match.group(3),
-                        'interfaces': ''
-                    })
+        for cmd in vlan_commands:
+            try:
+                vlan_output = conn.send_command(cmd, delay_factor=2)
+                if 'Invalid' not in vlan_output and 'Error' not in vlan_output:
+                    with open(output_dir / 'vlans_raw.txt', 'w') as f:
+                        f.write(vlan_output)
+                    
+                    parsed = parse_output(platform=device_type, command=cmd, data=vlan_output)
+                    if parsed:
+                        for entry in parsed:
+                            # Handle interfaces as list
+                            interfaces = entry.get('interfaces', [])
+                            if isinstance(interfaces, list):
+                                interfaces = ', '.join(interfaces)
+                            
+                            vlan_data.append({
+                                'vlan_id': entry.get('vlan_id', ''),
+                                'name': entry.get('name', ''),
+                                'status': entry.get('status', 'active'),
+                                'interfaces': interfaces
+                            })
+                        print(f"    Parsed {len(vlan_data)} VLANs")
+                        break
+            except:
+                continue
         
         if vlan_data:
             with open(output_dir / 'vlans.csv', 'w', newline='') as f:
@@ -752,7 +399,7 @@ def collect_from_device(ip, username, password):
                 writer.writeheader()
                 writer.writerows(vlan_data)
         
-        # Create comprehensive connectivity report
+        # ========== SUMMARY REPORT ==========
         with open(output_dir / 'connectivity_report.txt', 'w') as f:
             f.write(f"Device Connectivity Report\n")
             f.write(f"="*60 + "\n")
@@ -761,39 +408,27 @@ def collect_from_device(ip, username, password):
             f.write(f"Type: {device_type}\n")
             f.write(f"Collected: {timestamp}\n\n")
             
+            f.write("Summary:\n")
+            f.write(f"  Total Neighbors: {len(all_neighbors)}\n")
+            f.write(f"  - CDP: {sum(1 for n in all_neighbors if n.get('protocol') == 'CDP')}\n")
+            f.write(f"  - LLDP: {sum(1 for n in all_neighbors if n.get('protocol') == 'LLDP')}\n")
+            f.write(f"  MAC Entries: {len(mac_data)}\n")
+            f.write(f"  ARP Entries: {len(arp_data)}\n")
+            f.write(f"  VLANs: {len(vlan_data)}\n\n")
+            
             f.write("Connected Devices:\n")
             f.write("-"*40 + "\n")
             
-            # Group neighbors by protocol
-            cdp_count = sum(1 for n in all_neighbors if n.get('protocol') == 'CDP')
-            lldp_count = sum(1 for n in all_neighbors if n.get('protocol') == 'LLDP')
-            
-            f.write(f"Total CDP Neighbors: {cdp_count}\n")
-            f.write(f"Total LLDP Neighbors: {lldp_count}\n\n")
-            
             for n in all_neighbors:
-                f.write(f"[{n.get('protocol', 'Unknown')}] Local Port: {n.get('local_interface', 'Unknown')}\n")
-                f.write(f"  -> Neighbor: {n.get('neighbor_device', 'Unknown')}\n")
-                f.write(f"  -> Neighbor Port: {n.get('neighbor_interface', 'Unknown')}\n")
-                f.write(f"  -> Neighbor IP: {n.get('neighbor_ip', 'Unknown')}\n")
-                f.write(f"  -> Platform: {n.get('platform', 'Unknown')}\n")
+                f.write(f"\n[{n.get('protocol', 'Unknown')}] {n.get('local_interface', 'Unknown')}\n")
+                f.write(f"  Device: {n.get('neighbor_device', 'Unknown')}\n")
+                f.write(f"  Remote Port: {n.get('neighbor_interface', 'Unknown')}\n")
+                if n.get('neighbor_ip'):
+                    f.write(f"  IP: {n.get('neighbor_ip')}\n")
+                if n.get('platform'):
+                    f.write(f"  Platform: {n.get('platform')}\n")
                 if n.get('native_vlan'):
-                    f.write(f"  -> Native VLAN: {n.get('native_vlan')}\n")
-                if n.get('duplex'):
-                    f.write(f"  -> Duplex: {n.get('duplex')}\n")
-                if n.get('software_version'):
-                    # Show just first line of version for readability
-                    version = n.get('software_version', '').split('\n')[0]
-                    f.write(f"  -> Version: {version}\n")
-                f.write("\n")
-            
-            f.write(f"\n" + "="*60 + "\n")
-            f.write(f"Summary Statistics:\n")
-            f.write(f"Total Neighbors: {len(all_neighbors)}\n")
-            f.write(f"MAC Entries: {len(mac_data)}\n")
-            f.write(f"ARP Entries: {len(arp_data)}\n")
-            f.write(f"Correlated MAC/ARP: {len(correlated_data)}\n")
-            f.write(f"VLANs: {len(vlan_data)}\n")
+                    f.write(f"  Native VLAN: {n.get('native_vlan')}\n")
         
         conn.disconnect()
         print(f"  [SUCCESS] Data saved to {output_dir}")
@@ -812,16 +447,16 @@ def collect_from_device(ip, username, password):
 def main():
     """Main function"""
     print("="*60)
-    print("Network Device Collector with TextFSM Parsing")
+    print("Network Device Collector with NTC Templates")
     print("="*60)
     
-    # Check if required modules are installed
+    # Check required modules
     try:
         from ntc_templates.parse import parse_output
-        print("✓ TextFSM parsing enabled")
+        print("✓ NTC Templates installed")
     except ImportError:
-        print("✗ WARNING: Install textfsm and ntc-templates for better parsing")
-        print("  Run: pip install textfsm ntc-templates")
+        print("✗ ERROR: NTC Templates not installed")
+        print("  Run: pip install ntc-templates")
         return
     
     try:
@@ -875,500 +510,13 @@ def main():
         print(f"✗ Failed: {failed} devices")
     
     print(f"\n📁 Check 'network_data/' folder for results")
-    print("\nKey files created per device:")
-    print("  ├── neighbors.csv         - CDP/LLDP neighbors (MAIN OUTPUT)")
-    print("  ├── neighbors.json        - Neighbors in JSON format")
-    print("  ├── mac_arp_correlated.csv - MAC+ARP correlation table")
-    print("  ├── mac_table.csv         - MAC address table")
-    print("  ├── arp_table.csv         - ARP table")
-    print("  ├── vlans.csv            - VLAN information")
-    print("  ├── connectivity_report.txt - Human-readable report")
-    print("  └── *_raw.txt files      - Raw command outputs")
-
-if __name__ == "__main__":
-    main(), line) and not current.get('neighbor_ip'):
-                current['neighbor_ip'] = line.strip()
-            
-            # System Description (platform info)
-            elif 'System Description' in line or 'SysDesc' in line:
-                if ':' in line:
-                    desc = line.split(':', 1)[1].strip()
-                    # Take first line if multiline
-                    if desc:
-                        current['platform'] = desc.split('\n')[0].strip()
-    
-    # Don't forget the last entry
-    if current and current.get('neighbor_device'):
-        neighbors.append(current)
-    
-    # For Cisco format where System Name might be in different format
-    if not neighbors:
-        current = {}
-        for line in output.split('\n'):
-            # Alternative Cisco LLDP format
-            if 'Device ID' in line:
-                if current and 'neighbor_device' in current:
-                    neighbors.append(current)
-                if ':' in line:
-                    device = line.split(':', 1)[1].strip()
-                    current = {
-                        'protocol': 'LLDP',
-                        'neighbor_device': device,
-                        'neighbor_ip': '',
-                        'neighbor_interface': '',
-                        'local_interface': '',
-                        'platform': '',
-                        'software_version': '',
-                        'native_vlan': '',
-                        'duplex': ''
-                    }
-            elif current:
-                if 'Local Intf' in line and ':' in line:
-                    current['local_interface'] = line.split(':', 1)[1].strip()
-                elif 'Port id' in line and ':' in line:
-                    current['neighbor_interface'] = line.split(':', 1)[1].strip()
-                elif 'System Name' in line and ':' in line:
-                    name = line.split(':', 1)[1].strip()
-                    if not current.get('neighbor_device'):
-                        current['neighbor_device'] = name
-        
-        if current and current.get('neighbor_device'):
-            neighbors.append(current)
-    
-    # Clean up empty entries
-    neighbors = [n for n in neighbors if n.get('neighbor_device') or n.get('neighbor_ip')]
-    
-    if neighbors:
-        print(f"      Parsed {len(neighbors)} LLDP neighbors with basic parser")
-        # Debug: show what we found
-        for n in neighbors:
-            print(f"        - {n.get('neighbor_device', 'Unknown')} on {n.get('local_interface', 'Unknown')}")
-    else:
-        print("      No LLDP neighbors found in output")
-    
-    return neighbors
-
-def correlate_mac_arp(mac_data, arp_data):
-    """Correlate MAC and ARP tables to create unified view"""
-    correlated = []
-    
-    # Create lookup dictionaries
-    arp_by_mac = {}
-    for arp in arp_data:
-        mac = arp.get('mac', '').lower()
-        if mac:
-            arp_by_mac[mac] = arp
-    
-    # Correlate MAC entries with ARP
-    for mac_entry in mac_data:
-        mac_addr = mac_entry.get('mac', '').lower()
-        entry = {
-            'vlan': mac_entry.get('vlan', ''),
-            'mac': mac_entry.get('mac', ''),
-            'type': mac_entry.get('type', ''),
-            'interface': mac_entry.get('interface', ''),
-            'ip': '',
-            'arp_interface': ''
-        }
-        
-        # Look for matching ARP entry
-        if mac_addr in arp_by_mac:
-            arp_entry = arp_by_mac[mac_addr]
-            entry['ip'] = arp_entry.get('ip', '')
-            entry['arp_interface'] = arp_entry.get('interface', '')
-        
-        correlated.append(entry)
-    
-    # Add ARP entries without matching MAC
-    processed_macs = set(m.get('mac', '').lower() for m in mac_data)
-    for arp_entry in arp_data:
-        mac_addr = arp_entry.get('mac', '').lower()
-        if mac_addr and mac_addr not in processed_macs:
-            entry = {
-                'vlan': '',
-                'mac': arp_entry.get('mac', ''),
-                'type': 'ARP-only',
-                'interface': '',
-                'ip': arp_entry.get('ip', ''),
-                'arp_interface': arp_entry.get('interface', '')
-            }
-            correlated.append(entry)
-    
-    return correlated
-
-def collect_from_device(ip, username, password):
-    """Collect data from one device"""
-    print(f"\nConnecting to {ip}...")
-    
-    # Initial connection parameters
-    device = {
-        'device_type': 'autodetect',  # Let Netmiko auto-detect
-        'ip': ip,
-        'username': username,
-        'password': password,
-        'timeout': 30,
-        'global_delay_factor': 2,
-    }
-    
-    try:
-        # Try autodetect first
-        try:
-            from netmiko import SSHDetect
-            guesser = SSHDetect(**device)
-            best_match = guesser.autodetect()
-            device['device_type'] = best_match
-            print(f"  Auto-detected: {best_match}")
-        except:
-            # Fallback to cisco_ios if autodetect fails
-            device['device_type'] = 'cisco_ios'
-            print("  Auto-detect failed, using cisco_ios")
-        
-        # Connect
-        conn = ConnectHandler(**device)
-        hostname = conn.find_prompt().strip('#>')
-        
-        # Detect specific device type
-        device_type, version_output = detect_device_type(conn)
-        
-        print(f"  Connected to {hostname} (type: {device_type})")
-        
-        # Create output folder
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        safe_hostname = re.sub(r'[^\w\-_]', '_', hostname)
-        output_dir = Path(f"network_data/{safe_hostname}_{ip}_{timestamp}")
-        output_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Save version info
-        with open(output_dir / 'version.txt', 'w') as f:
-            f.write(version_output)
-        
-        # Collect MAC table
-        print("  Getting MAC table...")
-        mac_command = get_mac_table_command(device_type)
-        mac_output = conn.send_command(mac_command)
-        with open(output_dir / 'mac_table_raw.txt', 'w') as f:
-            f.write(mac_output)
-        
-        # Parse MAC table
-        mac_data = []
-        try:
-            parsed_mac = parse_output(platform=device_type, command=mac_command, data=mac_output)
-            if parsed_mac:
-                for entry in parsed_mac:
-                    mac_data.append({
-                        'vlan': entry.get('vlan', ''),
-                        'mac': entry.get('destination_address', entry.get('mac', '')),
-                        'type': entry.get('type', 'dynamic'),
-                        'interface': entry.get('destination_port', entry.get('ports', ''))
-                    })
-                print(f"    Parsed {len(mac_data)} MAC entries with TextFSM")
-        except Exception as e:
-            print(f"    TextFSM MAC parsing failed: {e}, using regex")
-            # Fallback to regex parsing
-            for line in mac_output.split('\n'):
-                match = re.search(r'(\d+)\s+([0-9a-f]{4}\.[0-9a-f]{4}\.[0-9a-f]{4})\s+(\w+)\s+(\S+)', line, re.I)
-                if match:
-                    mac_data.append({
-                        'vlan': match.group(1),
-                        'mac': match.group(2),
-                        'type': match.group(3),
-                        'interface': match.group(4)
-                    })
-        
-        # Collect ARP table
-        print("  Getting ARP table...")
-        arp_output = conn.send_command('show ip arp')
-        with open(output_dir / 'arp_table_raw.txt', 'w') as f:
-            f.write(arp_output)
-        
-        # Parse ARP
-        arp_data = []
-        try:
-            parsed_arp = parse_output(platform=device_type, command='show ip arp', data=arp_output)
-            if parsed_arp:
-                for entry in parsed_arp:
-                    arp_data.append({
-                        'ip': entry.get('address', entry.get('ip', '')),
-                        'mac': entry.get('mac', ''),
-                        'interface': entry.get('interface', '')
-                    })
-                print(f"    Parsed {len(arp_data)} ARP entries with TextFSM")
-        except Exception as e:
-            print(f"    TextFSM ARP parsing failed: {e}, using regex")
-            # Fallback to regex
-            for line in arp_output.split('\n'):
-                match = re.search(r'(\d+\.\d+\.\d+\.\d+)\s+\S+\s+([0-9a-f]{4}\.[0-9a-f]{4}\.[0-9a-f]{4})\s+\S+\s+(\S+)', line, re.I)
-                if match:
-                    arp_data.append({
-                        'ip': match.group(1),
-                        'mac': match.group(2),
-                        'interface': match.group(3)
-                    })
-        
-        # Save individual MAC and ARP tables
-        if mac_data:
-            with open(output_dir / 'mac_table.csv', 'w', newline='') as f:
-                writer = csv.DictWriter(f, fieldnames=['vlan', 'mac', 'type', 'interface'])
-                writer.writeheader()
-                writer.writerows(mac_data)
-        
-        if arp_data:
-            with open(output_dir / 'arp_table.csv', 'w', newline='') as f:
-                writer = csv.DictWriter(f, fieldnames=['ip', 'mac', 'interface'])
-                writer.writeheader()
-                writer.writerows(arp_data)
-        
-        # Correlate MAC and ARP tables
-        correlated_data = []  # Initialize
-        print("  Correlating MAC and ARP tables...")
-        correlated_data = correlate_mac_arp(mac_data, arp_data)
-        if correlated_data:
-            with open(output_dir / 'mac_arp_correlated.csv', 'w', newline='') as f:
-                writer = csv.DictWriter(f, fieldnames=['vlan', 'mac', 'type', 'interface', 'ip', 'arp_interface'])
-                writer.writeheader()
-                writer.writerows(correlated_data)
-            print(f"    Created correlated table with {len(correlated_data)} entries")
-        
-        # Collect CDP neighbors
-        all_neighbors = []
-        cdp_neighbors = []  # Initialize to empty list
-        print("  Getting CDP neighbors...")
-        try:
-            cdp_output = conn.send_command('show cdp neighbors detail', delay_factor=2)
-            with open(output_dir / 'cdp_neighbors_raw.txt', 'w') as f:
-                f.write(cdp_output)
-            
-            # Debug: save TextFSM parsed output to see what fields we get
-            try:
-                debug_parsed = parse_output(platform=device_type, command='show cdp neighbors detail', data=cdp_output)
-                if debug_parsed:
-                    with open(output_dir / 'cdp_textfsm_debug.json', 'w') as f:
-                        json.dump(debug_parsed, f, indent=2)
-                    print(f"    DEBUG: TextFSM CDP fields saved to cdp_textfsm_debug.json")
-            except:
-                pass
-            
-            cdp_neighbors = parse_cdp_neighbors(cdp_output, device_type)
-            all_neighbors.extend(cdp_neighbors)
-        except Exception as e:
-            print(f"    CDP collection failed: {e}")
-        
-        # Collect LLDP neighbors
-        print("  Getting LLDP neighbors...")
-        try:
-            lldp_output = conn.send_command('show lldp neighbors detail', delay_factor=2)
-            with open(output_dir / 'lldp_neighbors_raw.txt', 'w') as f:
-                f.write(lldp_output)
-            
-            # Debug: save TextFSM parsed output to see what fields we get
-            try:
-                debug_parsed = parse_output(platform=device_type, command='show lldp neighbors detail', data=lldp_output)
-                if debug_parsed:
-                    with open(output_dir / 'lldp_textfsm_debug.json', 'w') as f:
-                        json.dump(debug_parsed, f, indent=2)
-                    print(f"    DEBUG: TextFSM LLDP fields saved to lldp_textfsm_debug.json")
-            except:
-                pass
-            
-            lldp_neighbors = parse_lldp_neighbors(lldp_output, device_type)
-            
-            # Deduplicate - only add LLDP entries that don't exist in CDP
-            cdp_interfaces = set(n.get('local_interface') for n in cdp_neighbors if n.get('local_interface'))
-            for lldp in lldp_neighbors:
-                if lldp.get('local_interface') not in cdp_interfaces:
-                    all_neighbors.append(lldp)
-        except Exception as e:
-            print(f"    LLDP collection failed: {e}")
-        
-        # Save all neighbors to CSV
-        if all_neighbors:
-            # Get all unique fields from neighbors
-            all_fields = set()
-            for neighbor in all_neighbors:
-                all_fields.update(neighbor.keys())
-            
-            fieldnames = sorted(list(all_fields))
-            
-            with open(output_dir / 'neighbors.csv', 'w', newline='') as f:
-                writer = csv.DictWriter(f, fieldnames=fieldnames)
-                writer.writeheader()
-                writer.writerows(all_neighbors)
-            
-            print(f"    Found {len(all_neighbors)} total neighbors (CDP+LLDP)")
-            
-            # Also save as JSON for easier processing
-            with open(output_dir / 'neighbors.json', 'w') as f:
-                json.dump(all_neighbors, f, indent=2)
-        else:
-            print("    WARNING: No neighbors found!")
-        
-        # Collect VLANs
-        print("  Getting VLANs...")
-        vlan_output = conn.send_command('show vlan')
-        with open(output_dir / 'vlans_raw.txt', 'w') as f:
-            f.write(vlan_output)
-        
-        # Parse VLANs
-        vlan_data = []
-        try:
-            parsed_vlans = parse_output(platform=device_type, command='show vlan', data=vlan_output)
-            if parsed_vlans:
-                for entry in parsed_vlans:
-                    interfaces = entry.get('interfaces', [])
-                    if isinstance(interfaces, list):
-                        interfaces = ', '.join(interfaces)
-                    vlan_data.append({
-                        'vlan_id': entry.get('vlan_id', ''),
-                        'name': entry.get('name', ''),
-                        'status': entry.get('status', 'active'),
-                        'interfaces': interfaces
-                    })
-                print(f"    Parsed {len(vlan_data)} VLANs with TextFSM")
-        except Exception as e:
-            print(f"    TextFSM VLAN parsing failed: {e}, using regex")
-            # Basic parsing
-            for line in vlan_output.split('\n'):
-                match = re.search(r'^(\d+)\s+(\S+)\s+(\w+)', line)
-                if match:
-                    vlan_data.append({
-                        'vlan_id': match.group(1),
-                        'name': match.group(2),
-                        'status': match.group(3),
-                        'interfaces': ''
-                    })
-        
-        if vlan_data:
-            with open(output_dir / 'vlans.csv', 'w', newline='') as f:
-                writer = csv.DictWriter(f, fieldnames=['vlan_id', 'name', 'status', 'interfaces'])
-                writer.writeheader()
-                writer.writerows(vlan_data)
-        
-        # Create comprehensive connectivity report
-        with open(output_dir / 'connectivity_report.txt', 'w') as f:
-            f.write(f"Device Connectivity Report\n")
-            f.write(f"="*60 + "\n")
-            f.write(f"Device: {hostname}\n")
-            f.write(f"IP: {ip}\n")
-            f.write(f"Type: {device_type}\n")
-            f.write(f"Collected: {timestamp}\n\n")
-            
-            f.write("Connected Devices:\n")
-            f.write("-"*40 + "\n")
-            
-            # Group neighbors by protocol
-            cdp_count = sum(1 for n in all_neighbors if n.get('protocol') == 'CDP')
-            lldp_count = sum(1 for n in all_neighbors if n.get('protocol') == 'LLDP')
-            
-            f.write(f"Total CDP Neighbors: {cdp_count}\n")
-            f.write(f"Total LLDP Neighbors: {lldp_count}\n\n")
-            
-            for n in all_neighbors:
-                f.write(f"[{n.get('protocol', 'Unknown')}] Local Port: {n.get('local_interface', 'Unknown')}\n")
-                f.write(f"  -> Neighbor: {n.get('neighbor_device', 'Unknown')}\n")
-                f.write(f"  -> Neighbor Port: {n.get('neighbor_interface', 'Unknown')}\n")
-                f.write(f"  -> Neighbor IP: {n.get('neighbor_ip', 'Unknown')}\n")
-                f.write(f"  -> Platform: {n.get('platform', 'Unknown')}\n")
-                if n.get('capabilities'):
-                    f.write(f"  -> Capabilities: {n.get('capabilities')}\n")
-                f.write("\n")
-            
-            f.write(f"\n" + "="*60 + "\n")
-            f.write(f"Summary Statistics:\n")
-            f.write(f"Total Neighbors: {len(all_neighbors)}\n")
-            f.write(f"MAC Entries: {len(mac_data)}\n")
-            f.write(f"ARP Entries: {len(arp_data)}\n")
-            f.write(f"Correlated MAC/ARP: {len(correlated_data)}\n")
-            f.write(f"VLANs: {len(vlan_data)}\n")
-        
-        conn.disconnect()
-        print(f"  [SUCCESS] Data saved to {output_dir}")
-        return True
-        
-    except NetmikoAuthenticationException:
-        print(f"  [FAILED] Authentication failed for {ip}")
-        return False
-    except NetmikoTimeoutException:
-        print(f"  [FAILED] Connection timeout for {ip}")
-        return False
-    except Exception as e:
-        print(f"  [FAILED] {e}")
-        return False
-
-def main():
-    """Main function"""
-    print("="*60)
-    print("Network Device Collector with TextFSM Parsing")
-    print("="*60)
-    
-    # Check if required modules are installed
-    try:
-        from ntc_templates.parse import parse_output
-        print("✓ TextFSM parsing enabled")
-    except ImportError:
-        print("✗ WARNING: Install textfsm and ntc-templates for better parsing")
-        print("  Run: pip install textfsm ntc-templates")
-        return
-    
-    try:
-        from netmiko import ConnectHandler
-        print("✓ Netmiko installed")
-    except ImportError:
-        print("✗ ERROR: Netmiko not installed")
-        print("  Run: pip install netmiko")
-        return
-    
-    # Read device list
-    devices = []
-    try:
-        with open(DEVICE_LIST, 'r') as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith('#'):
-                    devices.append(line)
-    except FileNotFoundError:
-        print(f"\n✗ ERROR: {DEVICE_LIST} not found!")
-        print(f"  Create '{DEVICE_LIST}' with one IP per line")
-        print("  Example:")
-        print("    192.168.1.1")
-        print("    192.168.1.2")
-        print("    # 192.168.1.3  (commented out)")
-        return
-    
-    if not devices:
-        print(f"No devices found in {DEVICE_LIST}")
-        return
-    
-    print(f"\nFound {len(devices)} devices to process")
-    print("-"*60)
-    
-    # Process each device
-    success = 0
-    failed = 0
-    
-    for idx, ip in enumerate(devices, 1):
-        print(f"\n[{idx}/{len(devices)}] Processing {ip}")
-        if collect_from_device(ip, USERNAME, PASSWORD):
-            success += 1
-        else:
-            failed += 1
-    
-    # Summary
-    print("\n" + "="*60)
-    print(f"Collection Complete!")
-    print(f"✓ Success: {success} devices")
-    if failed > 0:
-        print(f"✗ Failed: {failed} devices")
-    
-    print(f"\n📁 Check 'network_data/' folder for results")
-    print("\nKey files created per device:")
-    print("  ├── neighbors.csv         - CDP/LLDP neighbors (MAIN OUTPUT)")
-    print("  ├── neighbors.json        - Neighbors in JSON format")
-    print("  ├── mac_arp_correlated.csv - MAC+ARP correlation table")
-    print("  ├── mac_table.csv         - MAC address table")
-    print("  ├── arp_table.csv         - ARP table")
-    print("  ├── vlans.csv            - VLAN information")
-    print("  ├── connectivity_report.txt - Human-readable report")
-    print("  └── *_raw.txt files      - Raw command outputs")
+    print("\nFiles created per device:")
+    print("  ├── neighbors.csv          - CDP/LLDP neighbors")
+    print("  ├── mac_arp_correlated.csv - Correlated MAC+ARP")
+    print("  ├── mac_table.csv          - MAC address table")
+    print("  ├── arp_table.csv          - ARP table")
+    print("  ├── vlans.csv              - VLAN information")
+    print("  └── connectivity_report.txt - Summary report")
 
 if __name__ == "__main__":
     main()
