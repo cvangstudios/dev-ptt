@@ -30,38 +30,39 @@ def parse_cdp_manual(output):
             
         neighbor = {}
         
-        # Device ID
+        # Device ID / Neighbor Name
         device_match = re.search(r'Device ID:\s*(.+)', entry)
         if device_match:
-            neighbor['device_id'] = device_match.group(1).strip()
+            neighbor['neighbor_name'] = device_match.group(1).strip()
+            # Also use as chassis_id if not found separately
+            neighbor['chassis_id'] = device_match.group(1).strip()
         
-        # IP address
+        # Management IP address
         ip_match = re.search(r'IP address:\s*(\d+\.\d+\.\d+\.\d+)', entry)
         if ip_match:
-            neighbor['ip_address'] = ip_match.group(1)
+            neighbor['mgmt_address'] = ip_match.group(1)
         
         # Platform
         platform_match = re.search(r'Platform:\s*([^,]+)', entry)
         if platform_match:
             neighbor['platform'] = platform_match.group(1).strip()
         
+        # Capabilities
+        cap_match = re.search(r'Capabilities:\s*(.+)', entry)
+        if cap_match:
+            neighbor['capabilities'] = cap_match.group(1).strip()
+        
         # Local and Remote interfaces
         intf_match = re.search(r'Interface:\s*([^,]+),\s*Port ID \(outgoing port\):\s*(.+)', entry)
         if intf_match:
-            neighbor['local_port'] = intf_match.group(1).strip()
-            neighbor['remote_port'] = intf_match.group(2).strip()
+            neighbor['local_interface'] = intf_match.group(1).strip()
+            neighbor['neighbor_interface'] = intf_match.group(2).strip()
         
-        # Native VLAN
-        vlan_match = re.search(r'Native VLAN:\s*(\d+)', entry)
-        if vlan_match:
-            neighbor['native_vlan'] = vlan_match.group(1)
+        # Interface IP (if exists)
+        neighbor['interface_ip'] = ''
+        neighbor['neighbor_description'] = ''
         
-        # Duplex
-        duplex_match = re.search(r'Duplex:\s*(\w+)', entry)
-        if duplex_match:
-            neighbor['duplex'] = duplex_match.group(1)
-        
-        if neighbor.get('device_id'):
+        if neighbor.get('neighbor_name'):
             neighbors.append(neighbor)
     
     return neighbors
@@ -121,13 +122,15 @@ def collect_from_device(ip, username, password):
                 
                 for entry in parsed:
                     cdp_data.append({
-                        'local_port': entry.get('local_port', ''),
-                        'device_id': entry.get('destination_host', entry.get('device_id', '')),
-                        'ip_address': entry.get('management_ip', ''),
+                        'local_interface': entry.get('local_interface', ''),
+                        'neighbor_name': entry.get('neighbor_name', ''),
+                        'mgmt_address': entry.get('mgmt_address', ''),
                         'platform': entry.get('platform', ''),
-                        'remote_port': entry.get('remote_port', ''),
-                        'native_vlan': entry.get('native_vlan', ''),
-                        'duplex': entry.get('duplex', '')
+                        'neighbor_interface': entry.get('neighbor_interface', ''),
+                        'interface_ip': entry.get('interface_ip', ''),
+                        'capabilities': entry.get('capabilities', ''),
+                        'chassis_id': entry.get('chassis_id', ''),
+                        'neighbor_description': entry.get('neighbor_description', '')
                     })
         except Exception as e:
             print(f"    NTC parsing failed: {e}")
@@ -135,20 +138,33 @@ def collect_from_device(ip, username, password):
         # If NTC failed or returned nothing, use manual parsing
         if not cdp_data:
             print("    Using manual CDP parsing...")
-            cdp_data = parse_cdp_manual(cdp_output)
+            parsed_manual = parse_cdp_manual(cdp_output)
+            # Map manual parse fields to expected field names
+            for entry in parsed_manual:
+                cdp_data.append({
+                    'local_interface': entry.get('local_interface', ''),
+                    'neighbor_name': entry.get('neighbor_name', ''),
+                    'mgmt_address': entry.get('mgmt_address', ''),
+                    'platform': entry.get('platform', ''),
+                    'neighbor_interface': entry.get('neighbor_interface', ''),
+                    'interface_ip': entry.get('interface_ip', ''),
+                    'capabilities': entry.get('capabilities', ''),
+                    'chassis_id': entry.get('chassis_id', ''),
+                    'neighbor_description': entry.get('neighbor_description', '')
+                })
             print(f"    Manual parsed {len(cdp_data)} CDP entries")
         
         # Save CDP data
         if cdp_data:
             with open(output_dir / 'cdp_neighbors.csv', 'w', newline='') as f:
-                fieldnames = ['local_port', 'device_id', 'remote_port', 'ip_address', 'platform', 'native_vlan', 'duplex']
+                fieldnames = ['local_interface', 'neighbor_name', 'neighbor_interface', 'mgmt_address', 'interface_ip', 'platform', 'capabilities', 'chassis_id', 'neighbor_description']
                 writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction='ignore')
                 writer.writeheader()
                 writer.writerows(cdp_data)
             
             print(f"    Saved {len(cdp_data)} CDP neighbors")
             for n in cdp_data[:3]:  # Show first 3
-                print(f"      {n.get('local_port', 'N/A')} -> {n.get('device_id', 'N/A')}")
+                print(f"      {n.get('local_interface', 'N/A')} -> {n.get('neighbor_name', 'N/A')} ({n.get('neighbor_interface', 'N/A')})")
         
         # ========== MAC ADDRESS TABLE ==========
         print("  Collecting MAC address table...")
@@ -172,10 +188,13 @@ def collect_from_device(ip, username, password):
                         
                         for entry in parsed:
                             mac_data.append({
-                                'vlan': entry.get('vlan', ''),
-                                'mac': entry.get('destination_address', entry.get('mac', '')),
+                                'vlan_id': entry.get('vlan_id', ''),
+                                'mac_address': entry.get('mac_address', ''),
                                 'type': entry.get('type', ''),
-                                'ports': entry.get('destination_port', entry.get('ports', ''))
+                                'ports': entry.get('ports', ''),
+                                'age': entry.get('age', ''),
+                                'secure': entry.get('secure', ''),
+                                'ntfy': entry.get('ntfy', '')
                             })
                         break
                 except:
@@ -189,16 +208,19 @@ def collect_from_device(ip, username, password):
                 match = re.search(r'(\d+)\s+([0-9a-f]{4}\.[0-9a-f]{4}\.[0-9a-f]{4})\s+(\w+)\s+(\S+)', line, re.I)
                 if match:
                     mac_data.append({
-                        'vlan': match.group(1),
-                        'mac': match.group(2),
+                        'vlan_id': match.group(1),
+                        'mac_address': match.group(2),
                         'type': match.group(3),
-                        'ports': match.group(4)
+                        'ports': match.group(4),
+                        'age': '',
+                        'secure': '',
+                        'ntfy': ''
                     })
         
         # Save MAC data
         if mac_data:
             with open(output_dir / 'mac_table.csv', 'w', newline='') as f:
-                writer = csv.DictWriter(f, fieldnames=['vlan', 'mac', 'type', 'ports'])
+                writer = csv.DictWriter(f, fieldnames=['vlan_id', 'mac_address', 'type', 'ports', 'age', 'secure', 'ntfy'])
                 writer.writeheader()
                 writer.writerows(mac_data)
             print(f"    Saved {len(mac_data)} MAC entries")
@@ -223,9 +245,10 @@ def collect_from_device(ip, username, password):
                 
                 for entry in parsed:
                     arp_data.append({
-                        'ip': entry.get('address', entry.get('ip', '')),
-                        'mac': entry.get('mac', ''),
-                        'interface': entry.get('interface', '')
+                        'ip_address': entry.get('ip_address', ''),
+                        'mac_address': entry.get('mac_address', ''),
+                        'interface': entry.get('interface', ''),
+                        'age': entry.get('age', '')
                     })
         except:
             pass
@@ -237,20 +260,79 @@ def collect_from_device(ip, username, password):
                 match = re.search(r'(\d+\.\d+\.\d+\.\d+)\s+\S+\s+([0-9a-f]{4}\.[0-9a-f]{4}\.[0-9a-f]{4})\s+\S+\s+(\S+)', line, re.I)
                 if match:
                     arp_data.append({
-                        'ip': match.group(1),
-                        'mac': match.group(2),
-                        'interface': match.group(3)
+                        'ip_address': match.group(1),
+                        'mac_address': match.group(2),
+                        'interface': match.group(3),
+                        'age': ''
                     })
         
         # Save ARP data
         if arp_data:
             with open(output_dir / 'arp_table.csv', 'w', newline='') as f:
-                writer = csv.DictWriter(f, fieldnames=['ip', 'mac', 'interface'])
+                writer = csv.DictWriter(f, fieldnames=['ip_address', 'mac_address', 'interface', 'age'])
                 writer.writeheader()
                 writer.writerows(arp_data)
             print(f"    Saved {len(arp_data)} ARP entries")
         
-        # ========== VLAN ==========
+        # ========== LLDP NEIGHBORS (if no CDP or in addition) ==========
+        print("  Collecting LLDP neighbors...")
+        lldp_output = conn.send_command('show lldp neighbors detail')
+        
+        # Save raw output
+        with open(output_dir / 'lldp_raw.txt', 'w') as f:
+            f.write(lldp_output)
+        
+        lldp_data = []
+        
+        if 'LLDP is not enabled' not in lldp_output:
+            try:
+                parsed = parse_output(platform=device_type, command='show lldp neighbors detail', data=lldp_output)
+                if parsed:
+                    print(f"    NTC parsed {len(parsed)} LLDP entries")
+                    # Save what NTC actually returns
+                    with open(output_dir / 'lldp_ntc_output.json', 'w') as f:
+                        json.dump(parsed, f, indent=2, default=str)
+                    
+                    # Map LLDP fields - they might be different from CDP
+                    for entry in parsed:
+                        lldp_data.append({
+                            'local_interface': entry.get('local_interface', entry.get('local_port', '')),
+                            'neighbor_name': entry.get('neighbor', entry.get('system_name', '')),
+                            'mgmt_address': entry.get('management_address', entry.get('mgmt_address', '')),
+                            'platform': entry.get('system_description', ''),
+                            'neighbor_interface': entry.get('neighbor_port_id', entry.get('remote_port', '')),
+                            'capabilities': entry.get('capabilities', ''),
+                            'chassis_id': entry.get('chassis_id', ''),
+                        })
+            except Exception as e:
+                print(f"    LLDP parsing failed: {e}")
+        
+        # Save LLDP data
+        if lldp_data:
+            with open(output_dir / 'lldp_neighbors.csv', 'w', newline='') as f:
+                fieldnames = ['local_interface', 'neighbor_name', 'neighbor_interface', 'mgmt_address', 'platform', 'capabilities', 'chassis_id']
+                writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction='ignore')
+                writer.writeheader()
+                writer.writerows(lldp_data)
+            
+            print(f"    Saved {len(lldp_data)} LLDP neighbors")
+        
+        # Combine CDP and LLDP neighbors
+        all_neighbors = []
+        for n in cdp_data:
+            n['protocol'] = 'CDP'
+            all_neighbors.append(n)
+        for n in lldp_data:
+            n['protocol'] = 'LLDP'
+            all_neighbors.append(n)
+        
+        if all_neighbors:
+            with open(output_dir / 'all_neighbors.csv', 'w', newline='') as f:
+                fieldnames = ['protocol', 'local_interface', 'neighbor_name', 'neighbor_interface', 'mgmt_address', 'platform', 'capabilities']
+                writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction='ignore')
+                writer.writeheader()
+                writer.writerows(all_neighbors)
+            print(f"    Saved {len(all_neighbors)} total neighbors (CDP + LLDP)")
         print("  Collecting VLANs...")
         vlan_output = conn.send_command('show vlan brief')
         
@@ -279,7 +361,7 @@ def collect_from_device(ip, username, password):
                     
                     vlan_data.append({
                         'vlan_id': entry.get('vlan_id', ''),
-                        'name': entry.get('name', ''),
+                        'vlan_name': entry.get('vlan_name', ''),
                         'status': entry.get('status', ''),
                         'interfaces': interfaces
                     })
@@ -289,7 +371,7 @@ def collect_from_device(ip, username, password):
         # Save VLAN data
         if vlan_data:
             with open(output_dir / 'vlan_table.csv', 'w', newline='') as f:
-                writer = csv.DictWriter(f, fieldnames=['vlan_id', 'name', 'status', 'interfaces'])
+                writer = csv.DictWriter(f, fieldnames=['vlan_id', 'vlan_name', 'status', 'interfaces'])
                 writer.writeheader()
                 writer.writerows(vlan_data)
             print(f"    Saved {len(vlan_data)} VLANs")
@@ -301,28 +383,28 @@ def collect_from_device(ip, username, password):
             # Create lookup
             arp_lookup = {}
             for arp in arp_data:
-                if arp['mac']:
+                if arp['mac_address']:
                     # Normalize MAC
-                    norm_mac = arp['mac'].lower().replace(':', '').replace('.', '').replace('-', '')
-                    arp_lookup[norm_mac] = arp['ip']
+                    norm_mac = arp['mac_address'].lower().replace(':', '').replace('.', '').replace('-', '')
+                    arp_lookup[norm_mac] = arp['ip_address']
             
             correlated = []
             for mac in mac_data:
-                if mac['mac']:
-                    norm_mac = mac['mac'].lower().replace(':', '').replace('.', '').replace('-', '')
+                if mac['mac_address']:
+                    norm_mac = mac['mac_address'].lower().replace(':', '').replace('.', '').replace('-', '')
                     ip = arp_lookup.get(norm_mac, '')
                     
                     correlated.append({
-                        'vlan': mac['vlan'],
-                        'mac': mac['mac'],
+                        'vlan_id': mac['vlan_id'],
+                        'mac_address': mac['mac_address'],
                         'type': mac['type'],
                         'ports': mac['ports'],
-                        'ip': ip
+                        'ip_address': ip
                     })
             
             if correlated:
                 with open(output_dir / 'mac_arp_correlated.csv', 'w', newline='') as f:
-                    writer = csv.DictWriter(f, fieldnames=['vlan', 'mac', 'type', 'ports', 'ip'])
+                    writer = csv.DictWriter(f, fieldnames=['vlan_id', 'mac_address', 'type', 'ports', 'ip_address'])
                     writer.writeheader()
                     writer.writerows(correlated)
                 print(f"    Saved {len(correlated)} correlated entries")
