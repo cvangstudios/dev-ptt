@@ -72,10 +72,37 @@ def collect_from_device(ip, username, password, enable_password=None):
         output_dir = Path(f"network_data/{safe_hostname}_{ip}_{timestamp}")
         output_dir.mkdir(parents=True, exist_ok=True)
         
+        print(f"  Output directory: {output_dir}")
+        print(f"  Absolute path: {output_dir.absolute()}")
+        
+        # Pre-create all JSON files to ensure they exist
+        json_files_to_create = [
+            'version_data.json',
+            'cdp_data.json', 
+            'lldp_data.json',
+            'mac_data.json',
+            'arp_data.json',
+            'vlan_data.json',
+            'commands_used.json',
+            'collection_summary.json'
+        ]
+        
+        print(f"  Creating JSON files...")
+        for jf in json_files_to_create:
+            json_path = output_dir / jf
+            try:
+                with open(str(json_path), 'w') as f:
+                    json.dump([], f)  # Start with empty array
+                print(f"    Created: {jf}")
+            except Exception as e:
+                print(f"    FAILED to create {jf}: {e}")
+        
+        print(f"  Pre-created {len(json_files_to_create)} JSON files")
+        
         # Get version to determine platform
         print("  Collecting version info...")
         version_output = conn.send_command('show version')
-        with open(output_dir / 'version_raw.txt', 'w') as f:
+        with open(str(output_dir / 'version_raw.txt'), 'w') as f:
             f.write(version_output)
         
         # Determine NTC platform
@@ -90,20 +117,23 @@ def collect_from_device(ip, username, password, enable_password=None):
         
         # Parse version with NTC and save JSON
         version_data = []
+        version_json_file = str(output_dir / 'version_data.json')
+        
         try:
             parsed = parse_output(platform=platform, command='show version', data=version_output)
-            with open(output_dir / 'version_data.json', 'w') as f:
-                json.dump(parsed if parsed else [], f, indent=2, default=str)
-            
+        except Exception as e:
+            print(f"    Version parsing error: {e}")
+            parsed = None
+        
+        # Always write version JSON
+        with open(version_json_file, 'w') as f:
             if parsed:
+                json.dump(parsed, f, indent=2, default=str)
                 version_data = parsed
                 print(f"    Version info parsed - saved to version_data.json")
             else:
-                print(f"    No version data parsed - empty JSON saved")
-        except Exception as e:
-            print(f"    Version parsing error: {e}")
-            with open(output_dir / 'version_data.json', 'w') as f:
                 json.dump([], f)
+                print(f"    No version data parsed - empty JSON saved")
         
         # Define commands based on platform (from NTC template filenames)
         if platform == 'arista_eos':
@@ -147,178 +177,198 @@ def collect_from_device(ip, username, password, enable_password=None):
             'vlan_data': []
         }
         
-        # Save commands used for debugging
+        # Save commands used for debugging (overwrite the pre-created empty file)
         commands_used = {
             'platform': platform,
             'commands': commands
         }
-        with open(output_dir / 'commands_used.json', 'w') as f:
+        with open(str(output_dir / 'commands_used.json'), 'w') as f:
             json.dump(commands_used, f, indent=2, default=str)
+            print(f"  Commands saved to commands_used.json")
         
         # ========== CDP ==========
+        print(f"  Collecting CDP neighbors...")
+        
+        # Always create the JSON file first
+        cdp_json_file = str(output_dir / 'cdp_data.json')
+        
         if commands['cdp']:
-            print(f"  Collecting CDP neighbors...")
             try:
                 cdp_output = conn.send_command(commands['cdp'])
-                with open(output_dir / 'cdp_raw.txt', 'w') as f:
+                with open(str(output_dir / 'cdp_raw.txt'), 'w') as f:
                     f.write(cdp_output)
                 
-                # Check if CDP is enabled
-                if 'CDP is not enabled' in cdp_output or '% Invalid' in cdp_output:
-                    print(f"    CDP not enabled or not supported")
-                    with open(output_dir / 'cdp_data.json', 'w') as f:
+                # Try parsing
+                parsed = None
+                try:
+                    parsed = parse_output(platform=platform, command=commands['cdp'], data=cdp_output)
+                except Exception as e:
+                    print(f"    CDP parsing error: {e}")
+                    parsed = None
+                
+                # Always write JSON
+                with open(cdp_json_file, 'w') as f:
+                    if parsed:
+                        json.dump(parsed, f, indent=2, default=str)
+                        all_data['cdp_data'] = parsed
+                        print(f"    Found {len(parsed)} CDP neighbors - saved to cdp_data.json")
+                    else:
                         json.dump([], f)
-                else:
-                    try:
-                        parsed = parse_output(platform=platform, command=commands['cdp'], data=cdp_output)
-                        with open(output_dir / 'cdp_data.json', 'w') as f:
-                            json.dump(parsed if parsed else [], f, indent=2, default=str)
+                        print(f"    No CDP data parsed - empty JSON saved")
                         
-                        if parsed:
-                            all_data['cdp_data'] = parsed
-                            print(f"    Found {len(parsed)} CDP neighbors")
-                        else:
-                            print(f"    No CDP data parsed")
-                    except Exception as e:
-                        print(f"    CDP parsing error: {e}")
-                        with open(output_dir / 'cdp_data.json', 'w') as f:
-                            json.dump([], f)
             except Exception as e:
                 print(f"    CDP command failed: {e}")
-                with open(output_dir / 'cdp_data.json', 'w') as f:
+                # Still write empty JSON
+                with open(cdp_json_file, 'w') as f:
                     json.dump([], f)
         else:
             print(f"  CDP not supported on {platform}")
-            with open(output_dir / 'cdp_data.json', 'w') as f:
+            with open(cdp_json_file, 'w') as f:
                 json.dump([], f)
         
         # ========== LLDP ==========
+        print(f"  Collecting LLDP neighbors...")
+        
+        # Always create the JSON file first
+        lldp_json_file = str(output_dir / 'lldp_data.json')
+        
         if commands['lldp']:
-            print(f"  Collecting LLDP neighbors...")
             try:
                 lldp_output = conn.send_command(commands['lldp'])
-                with open(output_dir / 'lldp_raw.txt', 'w') as f:
+                with open(str(output_dir / 'lldp_raw.txt'), 'w') as f:
                     f.write(lldp_output)
                 
-                # Check if LLDP is enabled
-                if 'LLDP is not enabled' in lldp_output or '% Invalid' in lldp_output:
-                    print(f"    LLDP not enabled or not supported")
-                    with open(output_dir / 'lldp_data.json', 'w') as f:
+                # Try parsing
+                parsed = None
+                try:
+                    parsed = parse_output(platform=platform, command=commands['lldp'], data=lldp_output)
+                except Exception as e:
+                    print(f"    LLDP parsing error: {e}")
+                    parsed = None
+                
+                # Always write JSON
+                with open(lldp_json_file, 'w') as f:
+                    if parsed:
+                        json.dump(parsed, f, indent=2, default=str)
+                        all_data['lldp_data'] = parsed
+                        print(f"    Found {len(parsed)} LLDP neighbors - saved to lldp_data.json")
+                    else:
                         json.dump([], f)
-                else:
-                    try:
-                        parsed = parse_output(platform=platform, command=commands['lldp'], data=lldp_output)
-                        with open(output_dir / 'lldp_data.json', 'w') as f:
-                            json.dump(parsed if parsed else [], f, indent=2, default=str)
+                        print(f"    No LLDP data parsed - empty JSON saved")
                         
-                        if parsed:
-                            all_data['lldp_data'] = parsed
-                            print(f"    Found {len(parsed)} LLDP neighbors")
-                        else:
-                            print(f"    No LLDP data parsed")
-                    except Exception as e:
-                        print(f"    LLDP parsing error: {e}")
-                        with open(output_dir / 'lldp_data.json', 'w') as f:
-                            json.dump([], f)
             except Exception as e:
                 print(f"    LLDP command failed: {e}")
-                with open(output_dir / 'lldp_data.json', 'w') as f:
+                # Still write empty JSON
+                with open(lldp_json_file, 'w') as f:
                     json.dump([], f)
         else:
             print(f"  LLDP not supported on {platform}")
-            with open(output_dir / 'lldp_data.json', 'w') as f:
+            with open(lldp_json_file, 'w') as f:
                 json.dump([], f)
         
         # ========== MAC TABLE ==========
+        print(f"  Collecting MAC address table...")
+        mac_json_file = str(output_dir / 'mac_data.json')
+        
         if commands['mac']:
-            print(f"  Collecting MAC address table...")
             try:
                 mac_output = conn.send_command(commands['mac'])
-                with open(output_dir / 'mac_raw.txt', 'w') as f:
+                with open(str(output_dir / 'mac_raw.txt'), 'w') as f:
                     f.write(mac_output)
                 
-                if '% Invalid' in mac_output or 'Error' in mac_output:
-                    print(f"    MAC command not recognized")
-                    with open(output_dir / 'mac_data.json', 'w') as f:
+                # Try parsing
+                parsed = None
+                try:
+                    parsed = parse_output(platform=platform, command=commands['mac'], data=mac_output)
+                except Exception as e:
+                    print(f"    MAC parsing error: {e}")
+                    parsed = None
+                
+                # Always write JSON
+                with open(mac_json_file, 'w') as f:
+                    if parsed:
+                        json.dump(parsed, f, indent=2, default=str)
+                        all_data['mac_data'] = parsed
+                        print(f"    Found {len(parsed)} MAC entries - saved to mac_data.json")
+                    else:
                         json.dump([], f)
-                else:
-                    try:
-                        parsed = parse_output(platform=platform, command=commands['mac'], data=mac_output)
-                        with open(output_dir / 'mac_data.json', 'w') as f:
-                            json.dump(parsed if parsed else [], f, indent=2, default=str)
+                        print(f"    No MAC data parsed - empty JSON saved")
                         
-                        if parsed:
-                            all_data['mac_data'] = parsed
-                            print(f"    Found {len(parsed)} MAC entries")
-                        else:
-                            print(f"    No MAC data parsed")
-                    except Exception as e:
-                        print(f"    MAC parsing error: {e}")
-                        with open(output_dir / 'mac_data.json', 'w') as f:
-                            json.dump([], f)
             except Exception as e:
                 print(f"    MAC command failed: {e}")
-                with open(output_dir / 'mac_data.json', 'w') as f:
+                with open(mac_json_file, 'w') as f:
                     json.dump([], f)
         
         # ========== ARP TABLE ==========
+        print(f"  Collecting ARP table...")
+        arp_json_file = str(output_dir / 'arp_data.json')
+        
         if commands['arp']:
-            print(f"  Collecting ARP table...")
             try:
                 arp_output = conn.send_command(commands['arp'])
-                with open(output_dir / 'arp_raw.txt', 'w') as f:
+                with open(str(output_dir / 'arp_raw.txt'), 'w') as f:
                     f.write(arp_output)
                 
+                # Try parsing
+                parsed = None
                 try:
                     parsed = parse_output(platform=platform, command=commands['arp'], data=arp_output)
-                    with open(output_dir / 'arp_data.json', 'w') as f:
-                        json.dump(parsed if parsed else [], f, indent=2, default=str)
-                    
-                    if parsed:
-                        all_data['arp_data'] = parsed
-                        print(f"    Found {len(parsed)} ARP entries")
-                    else:
-                        print(f"    No ARP data parsed")
                 except Exception as e:
                     print(f"    ARP parsing error: {e}")
-                    with open(output_dir / 'arp_data.json', 'w') as f:
+                    parsed = None
+                
+                # Always write JSON
+                with open(arp_json_file, 'w') as f:
+                    if parsed:
+                        json.dump(parsed, f, indent=2, default=str)
+                        all_data['arp_data'] = parsed
+                        print(f"    Found {len(parsed)} ARP entries - saved to arp_data.json")
+                    else:
                         json.dump([], f)
+                        print(f"    No ARP data parsed - empty JSON saved")
+                        
             except Exception as e:
                 print(f"    ARP command failed: {e}")
-                with open(output_dir / 'arp_data.json', 'w') as f:
+                with open(arp_json_file, 'w') as f:
                     json.dump([], f)
         
         # ========== VLANs ==========
+        print(f"  Collecting VLANs...")
+        vlan_json_file = str(output_dir / 'vlan_data.json')
+        
         if commands['vlan']:
-            print(f"  Collecting VLANs...")
             try:
                 vlan_output = conn.send_command(commands['vlan'])
-                with open(output_dir / 'vlan_raw.txt', 'w') as f:
+                with open(str(output_dir / 'vlan_raw.txt'), 'w') as f:
                     f.write(vlan_output)
                 
+                # Try parsing
+                parsed = None
                 try:
                     parsed = parse_output(platform=platform, command=commands['vlan'], data=vlan_output)
-                    with open(output_dir / 'vlan_data.json', 'w') as f:
-                        json.dump(parsed if parsed else [], f, indent=2, default=str)
-                    
-                    if parsed:
-                        all_data['vlan_data'] = parsed
-                        print(f"    Found {len(parsed)} VLANs")
-                    else:
-                        print(f"    No VLAN data parsed")
                 except Exception as e:
                     print(f"    VLAN parsing error: {e}")
-                    with open(output_dir / 'vlan_data.json', 'w') as f:
+                    parsed = None
+                
+                # Always write JSON
+                with open(vlan_json_file, 'w') as f:
+                    if parsed:
+                        json.dump(parsed, f, indent=2, default=str)
+                        all_data['vlan_data'] = parsed
+                        print(f"    Found {len(parsed)} VLANs - saved to vlan_data.json")
+                    else:
                         json.dump([], f)
+                        print(f"    No VLAN data parsed - empty JSON saved")
+                        
             except Exception as e:
                 print(f"    VLAN command failed: {e}")
-                with open(output_dir / 'vlan_data.json', 'w') as f:
+                with open(vlan_json_file, 'w') as f:
                     json.dump([], f)
         
         # ========== CREATE CSV FILES ==========
         # CDP CSV
         if all_data['cdp_data']:
-            with open(output_dir / 'cdp_neighbors.csv', 'w', newline='') as f:
+            with open(str(output_dir / 'cdp_neighbors.csv'), 'w', newline='') as f:
                 data = all_data['cdp_data'].copy()
                 # Add local_device field
                 for item in data:
@@ -332,7 +382,7 @@ def collect_from_device(ip, username, password, enable_password=None):
         
         # LLDP CSV
         if all_data['lldp_data']:
-            with open(output_dir / 'lldp_neighbors.csv', 'w', newline='') as f:
+            with open(str(output_dir / 'lldp_neighbors.csv'), 'w', newline='') as f:
                 data = all_data['lldp_data'].copy()
                 for item in data:
                     item['local_device'] = hostname
@@ -344,7 +394,7 @@ def collect_from_device(ip, username, password, enable_password=None):
         
         # MAC CSV
         if all_data['mac_data']:
-            with open(output_dir / 'mac_table.csv', 'w', newline='') as f:
+            with open(str(output_dir / 'mac_table.csv'), 'w', newline='') as f:
                 data = all_data['mac_data'].copy()
                 for item in data:
                     item['local_device'] = hostname
@@ -356,7 +406,7 @@ def collect_from_device(ip, username, password, enable_password=None):
         
         # ARP CSV
         if all_data['arp_data']:
-            with open(output_dir / 'arp_table.csv', 'w', newline='') as f:
+            with open(str(output_dir / 'arp_table.csv'), 'w', newline='') as f:
                 data = all_data['arp_data'].copy()
                 for item in data:
                     item['local_device'] = hostname
@@ -368,7 +418,7 @@ def collect_from_device(ip, username, password, enable_password=None):
         
         # VLAN CSV
         if all_data['vlan_data']:
-            with open(output_dir / 'vlan_table.csv', 'w', newline='') as f:
+            with open(str(output_dir / 'vlan_table.csv'), 'w', newline='') as f:
                 data = all_data['vlan_data'].copy()
                 for item in data:
                     item['local_device'] = hostname
@@ -392,7 +442,7 @@ def collect_from_device(ip, username, password, enable_password=None):
             all_neighbors.append(new_item)
         
         if all_neighbors:
-            with open(output_dir / 'all_neighbors.csv', 'w', newline='') as f:
+            with open(str(output_dir / 'all_neighbors.csv'), 'w', newline='') as f:
                 # Get all unique keys
                 all_keys = set()
                 for item in all_neighbors:
@@ -497,11 +547,39 @@ def collect_from_device(ip, username, password, enable_password=None):
                 'total_neighbors': len(all_neighbors)
             }
         }
-        with open(output_dir / 'collection_summary.json', 'w') as f:
+        with open(str(output_dir / 'collection_summary.json'), 'w') as f:
             json.dump(summary, f, indent=2, default=str)
+            print(f"  Collection summary saved")
+        
+        # List all JSON files created
+        print("\n  Verifying JSON files:")
+        expected_json = [
+            'version_data.json',
+            'cdp_data.json',
+            'lldp_data.json', 
+            'mac_data.json',
+            'arp_data.json',
+            'vlan_data.json',
+            'commands_used.json',
+            'collection_summary.json'
+        ]
+        
+        for expected_file in expected_json:
+            json_path = output_dir / expected_file
+            if json_path.exists():
+                file_size = json_path.stat().st_size
+                print(f"    ✓ {expected_file} ({file_size} bytes)")
+            else:
+                print(f"    ✗ {expected_file} MISSING!")
+        
+        # Also list any other JSON files
+        all_json = list(output_dir.glob('*.json'))
+        for jf in all_json:
+            if jf.name not in expected_json:
+                print(f"    + {jf.name} (unexpected)")
         
         conn.disconnect()
-        print(f"  ✓ SUCCESS - Data saved to {output_dir}")
+        print(f"\n  ✓ SUCCESS - Data saved to {output_dir}")
         return True
         
     except NetmikoAuthenticationException:
