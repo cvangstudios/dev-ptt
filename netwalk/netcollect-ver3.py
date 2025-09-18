@@ -367,26 +367,44 @@ def collect_from_device(ip, username, password, enable_password=None):
         print("  Correlating MAC and ARP tables...")
         correlated_data = []
         
+        # Debug: Show what fields we have
+        if all_data['mac_data']:
+            print(f"    MAC data sample fields: {list(all_data['mac_data'][0].keys()) if all_data['mac_data'] else 'None'}")
+        if all_data['arp_data']:
+            print(f"    ARP data sample fields: {list(all_data['arp_data'][0].keys()) if all_data['arp_data'] else 'None'}")
+        
         if all_data['mac_data'] and all_data['arp_data']:
             # Create ARP lookup dictionary (MAC -> IP)
             arp_lookup = {}
             for arp_entry in all_data['arp_data']:
-                # Get MAC address - field names vary by platform
-                mac = arp_entry.get('mac_address', arp_entry.get('mac', ''))
-                ip = arp_entry.get('ip_address', arp_entry.get('address', ''))
+                # Try multiple field names for MAC and IP
+                mac = (arp_entry.get('mac_address') or 
+                       arp_entry.get('mac') or 
+                       arp_entry.get('hardware_address') or 
+                       arp_entry.get('hw_address', ''))
+                       
+                ip = (arp_entry.get('ip_address') or 
+                      arp_entry.get('address') or 
+                      arp_entry.get('ip') or 
+                      arp_entry.get('network_address', ''))
                 
                 if mac and ip:
                     # Normalize MAC for comparison (remove . : -)
                     norm_mac = mac.lower().replace(':', '').replace('.', '').replace('-', '')
                     arp_lookup[norm_mac] = {
                         'ip_address': ip,
-                        'arp_interface': arp_entry.get('interface', '')
+                        'arp_interface': arp_entry.get('interface', arp_entry.get('port', ''))
                     }
+            
+            print(f"    Built ARP lookup with {len(arp_lookup)} entries")
             
             # Match MAC entries with ARP
             for mac_entry in all_data['mac_data']:
-                # Get MAC address - field names vary by platform
-                mac = mac_entry.get('mac_address', mac_entry.get('destination_address', ''))
+                # Try multiple field names for MAC address
+                mac = (mac_entry.get('mac_address') or 
+                       mac_entry.get('destination_address') or 
+                       mac_entry.get('mac') or 
+                       mac_entry.get('hw_address', ''))
                 
                 if mac:
                     # Normalize MAC for comparison
@@ -395,15 +413,20 @@ def collect_from_device(ip, username, password, enable_password=None):
                     # Look up IP from ARP table
                     arp_info = arp_lookup.get(norm_mac, {})
                     
-                    # Create correlated entry
+                    # Create correlated entry - handle various field names
                     correlated_entry = {
                         'local_device': hostname,
                         'ip_address': arp_info.get('ip_address', ''),
                         'mac_address': mac,
-                        'vlan': mac_entry.get('vlan', mac_entry.get('vlan_id', '')),
-                        'mac_interface': mac_entry.get('ports', mac_entry.get('destination_port', '')),
+                        'vlan': (mac_entry.get('vlan') or 
+                                mac_entry.get('vlan_id') or 
+                                mac_entry.get('vlan_number', '')),
+                        'mac_interface': (mac_entry.get('ports') or 
+                                         mac_entry.get('destination_port') or 
+                                         mac_entry.get('interface') or 
+                                         mac_entry.get('port', '')),
                         'arp_interface': arp_info.get('arp_interface', ''),
-                        'type': mac_entry.get('type', '')
+                        'type': mac_entry.get('type', mac_entry.get('mac_type', ''))
                     }
                     
                     correlated_data.append(correlated_entry)
@@ -411,20 +434,26 @@ def collect_from_device(ip, username, password, enable_password=None):
             print(f"    Correlated {len(correlated_data)} MAC entries with ARP")
             all_data['correlated_data'] = correlated_data
         else:
+            if not all_data['mac_data']:
+                print(f"    No MAC data available for correlation")
+            if not all_data['arp_data']:
+                print(f"    No ARP data available for correlation")
             print(f"    No correlation possible - need both MAC and ARP data")
         
-        # Save correlation data to JSON for debugging
+        # ALWAYS save correlation data to JSON (even if empty)
         with open(str(output_dir / 'mac_arp_correlation.json'), 'w') as f:
             json.dump(correlated_data, f, indent=2, default=str)
         
-        # Save correlation CSV
-        if correlated_data:
-            with open(str(output_dir / 'mac_arp_correlation.csv'), 'w', newline='') as f:
-                fieldnames = ['local_device', 'ip_address', 'mac_address', 'vlan', 'mac_interface', 'arp_interface', 'type']
-                writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction='ignore')
-                writer.writeheader()
+        # ALWAYS save correlation CSV (even if empty)
+        with open(str(output_dir / 'mac_arp_correlation.csv'), 'w', newline='') as f:
+            fieldnames = ['local_device', 'ip_address', 'mac_address', 'vlan', 'mac_interface', 'arp_interface', 'type']
+            writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction='ignore')
+            writer.writeheader()
+            if correlated_data:
                 writer.writerows(correlated_data)
-            print(f"    Saved MAC-ARP correlation to CSV")
+                print(f"    Saved {len(correlated_data)} correlations to CSV")
+            else:
+                print(f"    Saved empty correlation CSV")
         
         # ========== CREATE CSV FILES ==========
         # Version CSV
