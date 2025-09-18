@@ -47,11 +47,6 @@ def parse_cdp_manual(output):
         if platform_match:
             neighbor['platform'] = platform_match.group(1).strip()
         
-        # Capabilities
-        cap_match = re.search(r'Capabilities:\s*(.+)', entry)
-        if cap_match:
-            neighbor['capabilities'] = cap_match.group(1).strip()
-        
         # Local and Remote interfaces
         intf_match = re.search(r'Interface:\s*([^,]+),\s*Port ID \(outgoing port\):\s*(.+)', entry)
         if intf_match:
@@ -128,7 +123,6 @@ def collect_from_device(ip, username, password):
                         'platform': entry.get('platform', ''),
                         'neighbor_interface': entry.get('neighbor_interface', ''),
                         'interface_ip': entry.get('interface_ip', ''),
-                        'capabilities': entry.get('capabilities', ''),
                         'chassis_id': entry.get('chassis_id', ''),
                         'neighbor_description': entry.get('neighbor_description', '')
                     })
@@ -148,7 +142,6 @@ def collect_from_device(ip, username, password):
                     'platform': entry.get('platform', ''),
                     'neighbor_interface': entry.get('neighbor_interface', ''),
                     'interface_ip': entry.get('interface_ip', ''),
-                    'capabilities': entry.get('capabilities', ''),
                     'chassis_id': entry.get('chassis_id', ''),
                     'neighbor_description': entry.get('neighbor_description', '')
                 })
@@ -157,7 +150,7 @@ def collect_from_device(ip, username, password):
         # Save CDP data
         if cdp_data:
             with open(output_dir / 'cdp_neighbors.csv', 'w', newline='') as f:
-                fieldnames = ['local_interface', 'neighbor_name', 'neighbor_interface', 'mgmt_address', 'interface_ip', 'platform', 'capabilities', 'chassis_id', 'neighbor_description']
+                fieldnames = ['local_interface', 'neighbor_name', 'neighbor_interface', 'mgmt_address', 'interface_ip', 'platform', 'chassis_id', 'neighbor_description']
                 writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction='ignore')
                 writer.writeheader()
                 writer.writerows(cdp_data)
@@ -301,7 +294,6 @@ def collect_from_device(ip, username, password):
                             'mgmt_address': entry.get('management_address', entry.get('mgmt_address', '')),
                             'platform': entry.get('system_description', ''),
                             'neighbor_interface': entry.get('neighbor_port_id', entry.get('remote_port', '')),
-                            'capabilities': entry.get('capabilities', ''),
                             'chassis_id': entry.get('chassis_id', ''),
                         })
             except Exception as e:
@@ -310,7 +302,7 @@ def collect_from_device(ip, username, password):
         # Save LLDP data
         if lldp_data:
             with open(output_dir / 'lldp_neighbors.csv', 'w', newline='') as f:
-                fieldnames = ['local_interface', 'neighbor_name', 'neighbor_interface', 'mgmt_address', 'platform', 'capabilities', 'chassis_id']
+                fieldnames = ['local_interface', 'neighbor_name', 'neighbor_interface', 'mgmt_address', 'platform', 'chassis_id']
                 writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction='ignore')
                 writer.writeheader()
                 writer.writerows(lldp_data)
@@ -328,7 +320,7 @@ def collect_from_device(ip, username, password):
         
         if all_neighbors:
             with open(output_dir / 'all_neighbors.csv', 'w', newline='') as f:
-                fieldnames = ['protocol', 'local_interface', 'neighbor_name', 'neighbor_interface', 'mgmt_address', 'platform', 'capabilities']
+                fieldnames = ['protocol', 'local_interface', 'neighbor_name', 'neighbor_interface', 'mgmt_address', 'platform']
                 writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction='ignore')
                 writer.writeheader()
                 writer.writerows(all_neighbors)
