@@ -639,70 +639,131 @@ def collect_from_device(ip, username, password, enable_password=None):
             return cleaned
         
         # ========== Combined neighbors CSV (CDP + LLDP) ==========
+        # Define standard fieldnames for all_neighbors.csv
+        NEIGHBOR_FIELDNAMES = ['local_device', 'protocol', 'capabilities', 'chassis_id', 
+                              'interface_ip', 'local_interface', 'mgmt_address', 
+                              'neighbor_description', 'neighbor_interface', 'neighbor_name', 
+                              'platform', 'vlan_id', 'unique_id']
+        
         all_neighbors = []
         unique_ids_seen = set()
         duplicate_entries = []  # Track duplicates for logging
         
-        # Process CDP data
+        # Process CDP data - explicit field mapping for each platform
         for item in all_data['cdp_data']:
-            new_item = item.copy()
-            new_item['protocol'] = 'CDP'
-            new_item['local_device'] = hostname
-            
-            # Normalize interfaces
-            new_item['local_interface'] = normalize_interface(new_item.get('local_interface', ''))
-            new_item['neighbor_interface'] = normalize_interface(new_item.get('neighbor_interface', ''))
-            
-            # Clean hostname
-            new_item['neighbor_name'] = clean_hostname(new_item.get('neighbor_name', ''))
+            # CDP field mapping (same for IOS and NXOS)
+            # CDP fields: neighbor_name, local_interface, neighbor_interface, chassis_id, 
+            #             mgmt_address, neighbor_description, capabilities, vlan_id
+            standardized_item = {
+                'local_device': hostname,
+                'protocol': 'CDP',
+                'capabilities': item.get('capabilities', ''),
+                'chassis_id': item.get('chassis_id', ''),
+                'interface_ip': '',  # CDP doesn't have interface_ip
+                'local_interface': normalize_interface(item.get('local_interface', '')),
+                'mgmt_address': item.get('mgmt_address', ''),
+                'neighbor_description': item.get('neighbor_description', ''),
+                'neighbor_interface': normalize_interface(item.get('neighbor_interface', '')),
+                'neighbor_name': clean_hostname(item.get('neighbor_name', '')),
+                'platform': item.get('platform', ''),  # May or may not exist in CDP
+                'vlan_id': item.get('vlan_id', ''),
+                'unique_id': ''  # Will be set below
+            }
             
             # Create unique_id
-            unique_id = f"{hostname}_{new_item.get('local_interface', '')}_{new_item.get('neighbor_name', '')}_{new_item.get('neighbor_interface', '')}"
-            new_item['unique_id'] = unique_id
+            unique_id = f"{hostname}_{standardized_item['local_interface']}_{standardized_item['neighbor_name']}_{standardized_item['neighbor_interface']}"
+            standardized_item['unique_id'] = unique_id
             
             # Only add if we haven't seen this unique_id before
             if unique_id not in unique_ids_seen:
                 unique_ids_seen.add(unique_id)
-                all_neighbors.append(new_item)
+                all_neighbors.append(standardized_item)
             else:
                 print(f"    Skipping duplicate CDP entry: {unique_id}")
                 duplicate_entries.append({
                     'protocol': 'CDP',
                     'unique_id': unique_id,
-                    'local_interface': new_item.get('local_interface', ''),
-                    'neighbor_name': new_item.get('neighbor_name', ''),
-                    'neighbor_interface': new_item.get('neighbor_interface', '')
+                    'local_interface': standardized_item['local_interface'],
+                    'neighbor_name': standardized_item['neighbor_name'],
+                    'neighbor_interface': standardized_item['neighbor_interface']
                 })
         
-        # Process LLDP data
+        # Process LLDP data - explicit field mapping based on platform
         for item in all_data['lldp_data']:
-            new_item = item.copy()
-            new_item['protocol'] = 'LLDP'
-            new_item['local_device'] = hostname
-            
-            # Normalize interfaces
-            new_item['local_interface'] = normalize_interface(new_item.get('local_interface', ''))
-            new_item['neighbor_interface'] = normalize_interface(new_item.get('neighbor_interface', ''))
-            
-            # Clean hostname
-            new_item['neighbor_name'] = clean_hostname(new_item.get('neighbor_name', ''))
+            if platform == 'arista_eos':
+                # Arista LLDP field mapping
+                # Arista LLDP fields: neighbor_name, chassis_id, mgmt_address, neighbor_description,
+                #                     neighbor_interface, local_interface, neighbor_count, age
+                standardized_item = {
+                    'local_device': hostname,
+                    'protocol': 'LLDP',
+                    'capabilities': '',  # Arista LLDP doesn't have capabilities
+                    'chassis_id': item.get('chassis_id', ''),
+                    'interface_ip': '',  # Arista LLDP doesn't have interface_ip
+                    'local_interface': normalize_interface(item.get('local_interface', '')),
+                    'mgmt_address': item.get('mgmt_address', ''),
+                    'neighbor_description': item.get('neighbor_description', ''),
+                    'neighbor_interface': normalize_interface(item.get('neighbor_interface', '')),
+                    'neighbor_name': clean_hostname(item.get('neighbor_name', '')),
+                    'platform': '',  # Arista LLDP doesn't have platform
+                    'vlan_id': '',  # Arista LLDP doesn't have vlan_id
+                    'unique_id': ''  # Will be set below
+                }
+            elif platform == 'cisco_nxos':
+                # NXOS LLDP field mapping
+                # NXOS LLDP fields: chassis_id, neighbor_name, mgmt_address, platform, 
+                #                   neighbor_interface, local_interface, neighbor_description, 
+                #                   interface_ip, capabilities
+                standardized_item = {
+                    'local_device': hostname,
+                    'protocol': 'LLDP',
+                    'capabilities': item.get('capabilities', ''),
+                    'chassis_id': item.get('chassis_id', ''),
+                    'interface_ip': item.get('interface_ip', ''),
+                    'local_interface': normalize_interface(item.get('local_interface', '')),
+                    'mgmt_address': item.get('mgmt_address', ''),
+                    'neighbor_description': item.get('neighbor_description', ''),
+                    'neighbor_interface': normalize_interface(item.get('neighbor_interface', '')),
+                    'neighbor_name': clean_hostname(item.get('neighbor_name', '')),
+                    'platform': item.get('platform', ''),
+                    'vlan_id': '',  # NXOS LLDP doesn't have vlan_id
+                    'unique_id': ''  # Will be set below
+                }
+            else:
+                # Default/Cisco IOS LLDP field mapping
+                # Assuming similar to NXOS but may vary
+                standardized_item = {
+                    'local_device': hostname,
+                    'protocol': 'LLDP',
+                    'capabilities': item.get('capabilities', ''),
+                    'chassis_id': item.get('chassis_id', ''),
+                    'interface_ip': item.get('interface_ip', ''),
+                    'local_interface': normalize_interface(item.get('local_interface', '')),
+                    'mgmt_address': item.get('mgmt_address', ''),
+                    'neighbor_description': item.get('neighbor_description', ''),
+                    'neighbor_interface': normalize_interface(item.get('neighbor_interface', '')),
+                    'neighbor_name': clean_hostname(item.get('neighbor_name', '')),
+                    'platform': item.get('platform', ''),
+                    'vlan_id': item.get('vlan_id', ''),
+                    'unique_id': ''  # Will be set below
+                }
             
             # Create unique_id
-            unique_id = f"{hostname}_{new_item.get('local_interface', '')}_{new_item.get('neighbor_name', '')}_{new_item.get('neighbor_interface', '')}"
-            new_item['unique_id'] = unique_id
+            unique_id = f"{hostname}_{standardized_item['local_interface']}_{standardized_item['neighbor_name']}_{standardized_item['neighbor_interface']}"
+            standardized_item['unique_id'] = unique_id
             
             # Only add if we haven't seen this unique_id before
             if unique_id not in unique_ids_seen:
                 unique_ids_seen.add(unique_id)
-                all_neighbors.append(new_item)
+                all_neighbors.append(standardized_item)
             else:
                 print(f"    Skipping duplicate LLDP entry: {unique_id}")
                 duplicate_entries.append({
                     'protocol': 'LLDP',
                     'unique_id': unique_id,
-                    'local_interface': new_item.get('local_interface', ''),
-                    'neighbor_name': new_item.get('neighbor_name', ''),
-                    'neighbor_interface': new_item.get('neighbor_interface', '')
+                    'local_interface': standardized_item['local_interface'],
+                    'neighbor_name': standardized_item['neighbor_name'],
+                    'neighbor_interface': standardized_item['neighbor_interface']
                 })
         
         # Write duplicate log file
@@ -728,29 +789,14 @@ def collect_from_device(ip, username, password, enable_password=None):
         
         print(f"    Duplicate log saved to duplicate_neighbors.txt")
         
-        if all_neighbors:
-            with open(str(output_dir / 'all_neighbors.csv'), 'w', newline='') as f:
-                # Get all unique keys
-                all_keys = set()
-                for item in all_neighbors:
-                    all_keys.update(item.keys())
-                
-                # Define fieldnames with unique_id included
-                # Ensure unique_id comes after the standard fields
-                fieldnames = ['local_device', 'protocol'] + sorted([k for k in all_keys if k not in ['local_device', 'protocol', 'unique_id']]) + ['unique_id']
-                writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction='ignore')
-                writer.writeheader()
+        # Write all_neighbors.csv with fixed fieldnames
+        with open(str(output_dir / 'all_neighbors.csv'), 'w', newline='') as f:
+            writer = csv.DictWriter(f, fieldnames=NEIGHBOR_FIELDNAMES, extrasaction='ignore')
+            writer.writeheader()
+            if all_neighbors:
                 writer.writerows(all_neighbors)
-                
                 print(f"    Created all_neighbors.csv with {len(all_neighbors)} entries (removed {len(duplicate_entries)} duplicates)")
-        else:
-            # Still create empty file with headers
-            with open(str(output_dir / 'all_neighbors.csv'), 'w', newline='') as f:
-                fieldnames = ['local_device', 'protocol', 'capabilities', 'chassis_id', 'interface_ip', 
-                             'local_interface', 'mgmt_address', 'neighbor_description', 'neighbor_interface', 
-                             'neighbor_name', 'platform', 'vlan_id', 'unique_id']
-                writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction='ignore')
-                writer.writeheader()
+            else:
                 print(f"    Created empty all_neighbors.csv with headers")
         
         # ========== APPEND TO GLOBAL FILES ==========
@@ -835,26 +881,15 @@ def collect_from_device(ip, username, password, enable_password=None):
                     writer.writerows(arp_global)
                 print(f"    Added {len(arp_global)} ARP entries to global")
             
-            # Global Neighbors (already has local_device and unique_id from above)
+            # Global Neighbors - use fixed fieldnames like all_neighbors.csv
             if all_neighbors:
                 global_neighbor_file = Path('network_data/global_neighbor_table.csv')
                 file_exists = global_neighbor_file.exists()
                 
                 with open(global_neighbor_file, 'a', newline='') as f:
-                    if file_exists:
-                        # Just append with same field structure
-                        all_keys = set()
-                        for item in all_neighbors:
-                            all_keys.update(item.keys())
-                        fieldnames = ['local_device', 'protocol'] + sorted([k for k in all_keys if k not in ['local_device', 'protocol', 'unique_id']]) + ['unique_id']
-                        writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction='ignore')
-                    else:
+                    writer = csv.DictWriter(f, fieldnames=NEIGHBOR_FIELDNAMES, extrasaction='ignore')
+                    if not file_exists:
                         # New file, write header
-                        all_keys = set()
-                        for item in all_neighbors:
-                            all_keys.update(item.keys())
-                        fieldnames = ['local_device', 'protocol'] + sorted([k for k in all_keys if k not in ['local_device', 'protocol', 'unique_id']]) + ['unique_id']
-                        writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction='ignore')
                         writer.writeheader()
                     writer.writerows(all_neighbors)
                 print(f"    Added {len(all_neighbors)} neighbor entries to global")
