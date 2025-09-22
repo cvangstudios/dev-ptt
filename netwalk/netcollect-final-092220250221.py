@@ -638,17 +638,7 @@ def collect_from_device(ip, username, password, enable_password=None):
             
             return cleaned
         
-        # ========== Combined neighbors CSV (CDP + LLDP) ==========
-        all_neighbors = []
-        unique_ids_seen = set()
-        
-        # Process CDP data
-        for item in all_data['cdp_data']:
-            new_item = item.copy()
-            new_item['protocol'] = 'CDP'
-            new_item['local_device'] = hostname
-            
-            # Normalize interfaces
+ interfaces
             new_item['local_interface'] = normalize_interface(new_item.get('local_interface', ''))
             new_item['neighbor_interface'] = normalize_interface(new_item.get('neighbor_interface', ''))
             
