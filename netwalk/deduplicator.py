@@ -33,7 +33,18 @@ class NetworkDeduplicator:
     def load_data(self):
         """Load the CSV file"""
         self._log(f"Loading data from {self.csv_file}...")
-        self.df = pd.read_csv(self.csv_file)
+        try:
+            # Try UTF-8 first (most common)
+            self.df = pd.read_csv(self.csv_file, encoding='utf-8')
+        except UnicodeDecodeError:
+            try:
+                # Try Latin-1 if UTF-8 fails
+                self._log("UTF-8 decoding failed, trying Latin-1...")
+                self.df = pd.read_csv(self.csv_file, encoding='latin-1')
+            except:
+                # Try with default encoding as last resort
+                self._log("Latin-1 decoding failed, using default encoding...")
+                self.df = pd.read_csv(self.csv_file)
         
         # Add row numbers for reference (1-based to match CSV viewing)
         self.df['original_row_number'] = range(2, len(self.df) + 2)  # Starting from 2 (row 1 is header)
@@ -176,7 +187,7 @@ class NetworkDeduplicator:
         
         # Save debug file for inspection
         debug_file = self.save_unique_id2_debug_file()
-        self._log(f"\n✓ Check '{debug_file}' to verify unique_id2 values!")
+        self._log(f"\n[OK] Check '{debug_file}' to verify unique_id2 values!")
         
     def find_and_remove_duplicates(self):
         """Find and remove duplicate connections with detailed logging"""
@@ -243,11 +254,13 @@ class NetworkDeduplicator:
                 sample_row = sample_with_id2.iloc[0]
                 self._log(f"\n  Sample row with unique_id2:")
                 self._log(f"    Row {sample_row['original_row_number']}: unique_id2 = '{sample_row['unique_id2']}'")
+                self._log(f"    Expected format: neighbor_name_neighbor_interface_local_device_local_interface")
                 self._log(f"    Looking for match in unique_id dictionary...")
                 if str(sample_row['unique_id2']).strip() in unique_id_dict:
                     self._log(f"    Found match!")
                 else:
                     self._log(f"    No match found. This unique_id2 value doesn't exist in unique_id column.")
+                    self._log(f"    Check if unique_id uses underscores as separators in your CSV.")
         
         # Remove duplicates
         self._log("Removing duplicate connections...")
@@ -269,7 +282,7 @@ class NetworkDeduplicator:
         """Save detailed log file with duplicate information"""
         self._log(f"\nSaving detailed log to {self.log_file}...")
         
-        with open(self.log_file, 'w') as f:
+        with open(self.log_file, 'w', encoding='utf-8') as f:
             # Write header
             f.write("="*80 + "\n")
             f.write("NETWORK DEDUPLICATION LOG\n")
@@ -304,9 +317,9 @@ class NetworkDeduplicator:
                         
                         # Check if unique_id2 matches any unique_id
                         if str(row['unique_id2']).strip() in set(self.df['unique_id'].astype(str).str.strip()):
-                            f.write(f"  STATUS: ✓ MATCH FOUND - This is a duplicate\n")
+                            f.write(f"  STATUS: [MATCH FOUND] - This is a duplicate\n")
                         else:
-                            f.write(f"  STATUS: ✗ NO MATCH - unique_id2 doesn't match any unique_id\n")
+                            f.write(f"  STATUS: [NO MATCH] - unique_id2 doesn't match any unique_id\n")
                 else:
                     f.write("No rows with unique_id2 were created.\n")
             
@@ -351,6 +364,7 @@ class NetworkDeduplicator:
                 f.write("No duplicates found - all connections appear to be unique.\n")
                 f.write("\nPossible reasons:\n")
                 f.write("1. The unique_id field format doesn't match the expected concatenation\n")
+                f.write("   Expected format: local_device_local_interface_neighbor_name_neighbor_interface\n")
                 f.write("2. There are no bidirectional connections in the data\n")
                 f.write("3. Check the unique_id2_debug_*.csv file to verify concatenation\n")
             
@@ -802,7 +816,7 @@ class NetworkHierarchyAnalyzer:
         
         # Check connectivity
         if nx.is_connected(self.G):
-            print("Network Status: Fully Connected ✓")
+            print("Network Status: Fully Connected [OK]")
             print(f"Average Path Length: {nx.average_shortest_path_length(self.G):.2f}")
             print(f"Diameter: {nx.diameter(self.G)}")
         else:
@@ -821,11 +835,11 @@ class NetworkHierarchyAnalyzer:
                 print(f"Single Points of Failure: {len(articulation_points)} devices")
                 for ap in articulation_points[:5]:
                     tier = self.device_tiers[ap]
-                    print(f"  ⚠ {str(ap)} ({tier} layer)")
+                    print(f"  [WARNING] {str(ap)} ({tier} layer)")
                 if len(articulation_points) > 5:
                     print(f"  ... and {len(articulation_points)-5} more")
             else:
-                print("  ✓ No single points of failure detected")
+                print("  [OK] No single points of failure detected")
         
         # Bridge analysis
         bridges = list(nx.bridges(self.G))
@@ -834,7 +848,7 @@ class NetworkHierarchyAnalyzer:
             for bridge in bridges[:5]:
                 tier1 = self.device_tiers[bridge[0]]
                 tier2 = self.device_tiers[bridge[1]]
-                print(f"  ⚠ {str(bridge[0])} ({tier1}) <-> {str(bridge[1])} ({tier2})")
+                print(f"  [WARNING] {str(bridge[0])} ({tier1}) <-> {str(bridge[1])} ({tier2})")
             if len(bridges) > 5:
                 print(f"  ... and {len(bridges)-5} more")
     
