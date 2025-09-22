@@ -47,9 +47,16 @@ class NetworkDeduplicator:
         self._log("AUDITING BIDIRECTIONAL CONNECTIONS")
         self._log("="*60)
         
-        # Get unique local devices and neighbor names
-        local_devices = set(self.df['local_device'].unique())
-        neighbor_names = set(self.df['neighbor_name'].unique())
+        # Get unique local devices and neighbor names (handle NaN and convert to strings)
+        local_devices = set()
+        for device in self.df['local_device'].unique():
+            if pd.notna(device):
+                local_devices.add(str(device))
+        
+        neighbor_names = set()
+        for device in self.df['neighbor_name'].unique():
+            if pd.notna(device):
+                neighbor_names.add(str(device))
         
         # Find devices that appear in both columns
         bidirectional_devices = local_devices.intersection(neighbor_names)
@@ -57,7 +64,8 @@ class NetworkDeduplicator:
         self._log(f"Total unique local devices: {len(local_devices)}")
         self._log(f"Total unique neighbor names: {len(neighbor_names)}")
         self._log(f"Devices appearing as both local and neighbor: {len(bidirectional_devices)}")
-        self._log(f"Percentage of bidirectional devices: {len(bidirectional_devices)/len(local_devices)*100:.1f}%")
+        if len(local_devices) > 0:
+            self._log(f"Percentage of bidirectional devices: {len(bidirectional_devices)/len(local_devices)*100:.1f}%")
         
         return bidirectional_devices
     
@@ -65,16 +73,23 @@ class NetworkDeduplicator:
         """Create unique_id2 field for deduplication"""
         self._log("\nCreating unique_id2 field for deduplication...")
         
-        # Get set of all local devices for quick lookup
-        local_devices_set = set(self.df['local_device'].unique())
+        # Get set of all local devices for quick lookup (converted to strings)
+        local_devices_set = set()
+        for device in self.df['local_device'].unique():
+            if pd.notna(device):
+                local_devices_set.add(str(device))
         
         # Initialize unique_id2 column
         self.df['unique_id2'] = ''
         
         # Process each row
         for idx, row in self.df.iterrows():
+            # Skip if neighbor_name is NaN
+            if pd.isna(row['neighbor_name']):
+                continue
+                
             # Check if neighbor_name exists as a local_device
-            if row['neighbor_name'] in local_devices_set:
+            if str(row['neighbor_name']) in local_devices_set:
                 # Create unique_id2 by concatenating in reverse order
                 # Format: neighbor_name + neighbor_interface + local_device + local_interface
                 unique_id2 = (
@@ -96,32 +111,33 @@ class NetworkDeduplicator:
         # Create a dictionary for quick unique_id lookup with row information
         unique_id_dict = {}
         for idx, row in self.df.iterrows():
-            unique_id_dict[row['unique_id']] = {
-                'row_num': row['original_row_number'],
-                'local_device': row['local_device'],
-                'local_interface': row['local_interface'],
-                'neighbor_name': row['neighbor_name'],
-                'neighbor_interface': row['neighbor_interface']
-            }
+            if pd.notna(row['unique_id']):
+                unique_id_dict[str(row['unique_id'])] = {
+                    'row_num': row['original_row_number'],
+                    'local_device': str(row['local_device']) if pd.notna(row['local_device']) else 'N/A',
+                    'local_interface': str(row['local_interface']) if pd.notna(row['local_interface']) else 'N/A',
+                    'neighbor_name': str(row['neighbor_name']) if pd.notna(row['neighbor_name']) else 'N/A',
+                    'neighbor_interface': str(row['neighbor_interface']) if pd.notna(row['neighbor_interface']) else 'N/A'
+                }
         
         # Find rows where unique_id2 matches any unique_id
         self.df['is_duplicate'] = False
         self.df['matching_row'] = ''
         
         for idx, row in self.df.iterrows():
-            if row['unique_id2'] != '' and row['unique_id2'] in unique_id_dict:
+            if row['unique_id2'] != '' and str(row['unique_id2']) in unique_id_dict:
                 self.df.at[idx, 'is_duplicate'] = True
-                matching_info = unique_id_dict[row['unique_id2']]
+                matching_info = unique_id_dict[str(row['unique_id2'])]
                 self.df.at[idx, 'matching_row'] = matching_info['row_num']
                 
                 # Store detailed duplicate information
                 self.duplicate_details.append({
                     'deleted_row': row['original_row_number'],
-                    'deleted_connection': f"{row['local_device']}:{row['local_interface']} <-> {row['neighbor_name']}:{row['neighbor_interface']}",
+                    'deleted_connection': f"{str(row['local_device']) if pd.notna(row['local_device']) else 'N/A'}:{str(row['local_interface']) if pd.notna(row['local_interface']) else 'N/A'} <-> {str(row['neighbor_name']) if pd.notna(row['neighbor_name']) else 'N/A'}:{str(row['neighbor_interface']) if pd.notna(row['neighbor_interface']) else 'N/A'}",
                     'kept_row': matching_info['row_num'],
                     'kept_connection': f"{matching_info['local_device']}:{matching_info['local_interface']} <-> {matching_info['neighbor_name']}:{matching_info['neighbor_interface']}",
-                    'unique_id': row['unique_id'],
-                    'unique_id2': row['unique_id2']
+                    'unique_id': str(row['unique_id']) if pd.notna(row['unique_id']) else 'N/A',
+                    'unique_id2': str(row['unique_id2'])
                 })
         
         duplicates_count = self.df['is_duplicate'].sum()
@@ -190,7 +206,7 @@ class NetworkDeduplicator:
                 
                 device_duplicates = defaultdict(int)
                 for dup in self.duplicate_details:
-                    # Extract device from connection string
+                    # Extract device from connection string (already converted to string)
                     device = dup['deleted_connection'].split(':')[0]
                     device_duplicates[device] += 1
                 
@@ -213,8 +229,15 @@ class NetworkDeduplicator:
         self._log("CONNECTION SUMMARY (After Deduplication)")
         self._log("="*60)
         
-        # Unique devices
-        all_devices = set(self.df_deduped['local_device'].unique()) | set(self.df_deduped['neighbor_name'].unique())
+        # Unique devices (handling NaN and converting to strings)
+        all_devices = set()
+        for device in self.df_deduped['local_device'].unique():
+            if pd.notna(device):
+                all_devices.add(str(device))
+        for device in self.df_deduped['neighbor_name'].unique():
+            if pd.notna(device):
+                all_devices.add(str(device))
+        
         self._log(f"Total unique devices in network: {len(all_devices)}")
         
         # Connection types by protocol
@@ -262,6 +285,14 @@ class NetworkHierarchyAnalyzer:
         
         # Build edges from the deduplicated data
         for _, row in self.df.iterrows():
+            # Skip rows with invalid device names
+            if pd.isna(row['local_device']) or pd.isna(row['neighbor_name']):
+                continue
+            
+            # Convert device names to strings
+            local_device = str(row['local_device'])
+            neighbor_name = str(row['neighbor_name'])
+            
             # Add edge with all available metadata
             edge_data = {
                 'local_port': str(row['local_interface']),
@@ -278,8 +309,8 @@ class NetworkHierarchyAnalyzer:
                 edge_data['vlan_id'] = str(row['vlan_id'])
                 
             self.G.add_edge(
-                row['local_device'], 
-                row['neighbor_name'],
+                local_device, 
+                neighbor_name,
                 **edge_data
             )
         
@@ -317,7 +348,11 @@ class NetworkHierarchyAnalyzer:
         
         # 4. Check device naming patterns
         def get_name_tier_hint(device_name):
-            name_lower = device_name.lower()
+            # Convert to string and handle NaN/None values
+            if pd.isna(device_name) or device_name is None:
+                return 0.5
+            
+            name_lower = str(device_name).lower()
             # Core patterns
             if any(x in name_lower for x in ['core', 'backbone', 'cb', 'agg']):
                 return 1.0
@@ -339,14 +374,14 @@ class NetworkHierarchyAnalyzer:
             
             for _, _, data in edges:
                 # Check for trunk/uplink port patterns
-                port = data.get('local_port', '').lower()
+                port = str(data.get('local_port', '')).lower()
                 if any(x in port for x in ['te', 'ten', 'forty', 'hundred']):
                     score_hint = max(score_hint, 0.8)  # High-speed ports suggest core/dist
                 elif 'po' in port or 'port-channel' in port:
                     score_hint = max(score_hint, 0.7)  # Port channels suggest higher tier
                 
                 # Check capabilities if available
-                caps = data.get('capabilities', '').lower()
+                caps = str(data.get('capabilities', '')).lower()
                 if 'router' in caps:
                     score_hint = max(score_hint, 0.9)
                     
@@ -485,7 +520,7 @@ class NetworkHierarchyAnalyzer:
             edges_data = list(self.G.edges(node, data=True))
             
             hover_text = (
-                f"<b>{node}</b><br>"
+                f"<b>{str(node)}</b><br>"
                 f"<b>Tier:</b> {tier}<br>"
                 f"<b>Hierarchy Score:</b> {score:.3f}<br>"
                 f"<b>Connections:</b> {len(connections)}<br>"
@@ -494,13 +529,13 @@ class NetworkHierarchyAnalyzer:
             
             # Add connection details
             for _, neighbor, data in edges_data[:5]:
-                hover_text += f"  • {neighbor} ({data.get('local_port', 'N/A')})<br>"
+                hover_text += f"  • {str(neighbor)} ({data.get('local_port', 'N/A')})<br>"
             if len(edges_data) > 5:
                 hover_text += f"  ... and {len(edges_data)-5} more"
             
             net.add_node(
-                node,
-                label=node,
+                str(node),  # Convert to string for pyvis
+                label=str(node),
                 color=tier_colors[tier],
                 size=tier_sizes[tier],
                 level=tier_levels[tier],
@@ -512,15 +547,15 @@ class NetworkHierarchyAnalyzer:
         for edge in self.G.edges(data=True):
             hover_text = (
                 f"<b>Connection:</b><br>"
-                f"{edge[0]}:{edge[2].get('local_port', 'N/A')}<br>"
+                f"{str(edge[0])}:{edge[2].get('local_port', 'N/A')}<br>"
                 f"↕<br>"
-                f"{edge[1]}:{edge[2].get('remote_port', 'N/A')}<br>"
+                f"{str(edge[1])}:{edge[2].get('remote_port', 'N/A')}<br>"
                 f"<b>Protocol:</b> {edge[2].get('protocol', 'N/A')}"
             )
             if 'vlan_id' in edge[2]:
                 hover_text += f"<br><b>VLAN:</b> {edge[2]['vlan_id']}"
                 
-            net.add_edge(edge[0], edge[1], title=hover_text)
+            net.add_edge(str(edge[0]), str(edge[1]), title=hover_text)
         
         # Save the visualization
         net.save_graph(output_file)
@@ -535,7 +570,7 @@ class NetworkHierarchyAnalyzer:
         # Group devices by tier
         tiers = defaultdict(list)
         for node, tier in self.device_tiers.items():
-            tiers[tier].append((node, self.hierarchy_scores[node]))
+            tiers[tier].append((str(node), self.hierarchy_scores[node]))
         
         # Sort within each tier by score
         for tier in tiers:
@@ -564,7 +599,7 @@ class NetworkHierarchyAnalyzer:
             tier1, tier2 = self.device_tiers[node1], self.device_tiers[node2]
             if tier1 != tier2:
                 inter_tier_links.append({
-                    'link': f"{node1} ({tier1}) --- {node2} ({tier2})",
+                    'link': f"{str(node1)} ({tier1}) --- {str(node2)} ({tier2})",
                     'ports': f"{data.get('local_port', 'N/A')} <-> {data.get('remote_port', 'N/A')}",
                     'priority': abs(['Core', 'Distribution', 'Access'].index(tier1) - 
                                   ['Core', 'Distribution', 'Access'].index(tier2))
@@ -609,7 +644,7 @@ class NetworkHierarchyAnalyzer:
                 print(f"Single Points of Failure: {len(articulation_points)} devices")
                 for ap in articulation_points[:5]:
                     tier = self.device_tiers[ap]
-                    print(f"  ⚠ {ap} ({tier} layer)")
+                    print(f"  ⚠ {str(ap)} ({tier} layer)")
                 if len(articulation_points) > 5:
                     print(f"  ... and {len(articulation_points)-5} more")
             else:
@@ -622,7 +657,7 @@ class NetworkHierarchyAnalyzer:
             for bridge in bridges[:5]:
                 tier1 = self.device_tiers[bridge[0]]
                 tier2 = self.device_tiers[bridge[1]]
-                print(f"  ⚠ {bridge[0]} ({tier1}) <-> {bridge[1]} ({tier2})")
+                print(f"  ⚠ {str(bridge[0])} ({tier1}) <-> {str(bridge[1])} ({tier2})")
             if len(bridges) > 5:
                 print(f"  ... and {len(bridges)-5} more")
     
