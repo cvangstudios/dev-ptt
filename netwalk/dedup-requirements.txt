@@ -1,0 +1,15 @@
+# Network Deduplication and Hierarchy Analyzer Requirements
+# Python 3.7+ required
+
+# Core data processing
+pandas==2.0.3
+networkx==3.1
+
+# Visualization
+pyvis==0.3.2
+
+# Text-based tree visualization
+anytree==2.9.0
+
+# Optional: For better performance with large datasets
+# numpy==1.24.3 (pandas will install this automatically)
