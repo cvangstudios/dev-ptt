@@ -69,6 +69,56 @@ class NetworkDeduplicator:
         
         return bidirectional_devices
     
+    def save_unique_id2_debug_file(self):
+        """Save a debug CSV showing unique_id2 creation for verification"""
+        debug_file = f"unique_id2_debug_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+        self._log(f"\nSaving unique_id2 debug file to {debug_file}...")
+        
+        # Create a debug dataframe with only relevant columns
+        debug_columns = [
+            'original_row_number',
+            'local_device', 
+            'local_interface',
+            'neighbor_name',
+            'neighbor_interface',
+            'unique_id',
+            'unique_id2'
+        ]
+        
+        # Filter to show all rows, but highlight those with unique_id2
+        df_debug = self.df[debug_columns].copy()
+        
+        # Add a column to show if this row has unique_id2
+        df_debug['has_unique_id2'] = df_debug['unique_id2'] != ''
+        
+        # Add a column showing if unique_id2 matches any unique_id
+        unique_ids_set = set(self.df['unique_id'].astype(str).str.strip())
+        df_debug['unique_id2_matches_a_unique_id'] = df_debug['unique_id2'].apply(
+            lambda x: 'YES' if x != '' and str(x).strip() in unique_ids_set else 'NO' if x != '' else ''
+        )
+        
+        # Sort to show rows with unique_id2 first
+        df_debug = df_debug.sort_values('has_unique_id2', ascending=False)
+        
+        # Save the debug file
+        df_debug.to_csv(debug_file, index=False)
+        
+        self._log(f"Debug file saved with {len(df_debug)} rows")
+        self._log(f"Rows with unique_id2: {df_debug['has_unique_id2'].sum()}")
+        self._log(f"Rows where unique_id2 matches a unique_id: {(df_debug['unique_id2_matches_a_unique_id'] == 'YES').sum()}")
+        
+        # Show first few examples in the log
+        rows_with_id2 = df_debug[df_debug['has_unique_id2']]
+        if not rows_with_id2.empty:
+            self._log("\nFirst 5 rows with unique_id2 values:")
+            for idx, row in rows_with_id2.head(5).iterrows():
+                self._log(f"\nRow {row['original_row_number']}:")
+                self._log(f"  unique_id:  '{row['unique_id']}'")
+                self._log(f"  unique_id2: '{row['unique_id2']}'")
+                self._log(f"  Matches a unique_id? {row['unique_id2_matches_a_unique_id']}")
+        
+        return debug_file
+    
     def create_unique_id2(self):
         """Create unique_id2 field for deduplication"""
         self._log("\nCreating unique_id2 field for deduplication...")
@@ -77,32 +127,56 @@ class NetworkDeduplicator:
         local_devices_set = set()
         for device in self.df['local_device'].unique():
             if pd.notna(device):
-                local_devices_set.add(str(device))
+                local_devices_set.add(str(device).strip())
         
         # Initialize unique_id2 column
         self.df['unique_id2'] = ''
         
+        # Debug: Show first few unique_id values to understand format
+        self._log("\nSample unique_id values from CSV:")
+        sample_ids = self.df['unique_id'].head(3)
+        for i, uid in enumerate(sample_ids):
+            if pd.notna(uid):
+                self._log(f"  Row {i+2}: '{uid}'")
+        
         # Process each row
+        created_count = 0
         for idx, row in self.df.iterrows():
             # Skip if neighbor_name is NaN
             if pd.isna(row['neighbor_name']):
                 continue
                 
             # Check if neighbor_name exists as a local_device
-            if str(row['neighbor_name']) in local_devices_set:
-                # Create unique_id2 by concatenating in reverse order
-                # Format: neighbor_name + neighbor_interface + local_device + local_interface
+            neighbor_name_stripped = str(row['neighbor_name']).strip()
+            if neighbor_name_stripped in local_devices_set:
+                # Create unique_id2 by concatenating in EXACT same format as unique_id
+                # This should be: neighbor_name + neighbor_interface + local_device + local_interface
+                # with NO spaces or separators between them
                 unique_id2 = (
-                    str(row['neighbor_name']) + 
-                    str(row['neighbor_interface']) + 
-                    str(row['local_device']) + 
-                    str(row['local_interface'])
+                    str(row['neighbor_name']).strip() + 
+                    str(row['neighbor_interface']).strip() + 
+                    str(row['local_device']).strip() + 
+                    str(row['local_interface']).strip()
                 )
                 self.df.at[idx, 'unique_id2'] = unique_id2
+                created_count += 1
+                
+                # Debug: Show first few unique_id2 creations
+                if created_count <= 3:
+                    self._log(f"\nCreated unique_id2 for row {row['original_row_number']}:")
+                    self._log(f"  neighbor_name: '{row['neighbor_name']}' ({len(str(row['neighbor_name']).strip())} chars)")
+                    self._log(f"  neighbor_interface: '{row['neighbor_interface']}' ({len(str(row['neighbor_interface']).strip())} chars)")
+                    self._log(f"  local_device: '{row['local_device']}' ({len(str(row['local_device']).strip())} chars)")
+                    self._log(f"  local_interface: '{row['local_interface']}' ({len(str(row['local_interface']).strip())} chars)")
+                    self._log(f"  Concatenated unique_id2: '{unique_id2}' (total {len(unique_id2)} chars)")
         
         # Count how many rows have unique_id2
         rows_with_id2 = len(self.df[self.df['unique_id2'] != ''])
-        self._log(f"Created unique_id2 for {rows_with_id2} rows")
+        self._log(f"\nCreated unique_id2 for {rows_with_id2} rows where neighbor_name exists as local_device")
+        
+        # Save debug file for inspection
+        debug_file = self.save_unique_id2_debug_file()
+        self._log(f"\n✓ Check '{debug_file}' to verify unique_id2 values!")
         
     def find_and_remove_duplicates(self):
         """Find and remove duplicate connections with detailed logging"""
@@ -112,7 +186,9 @@ class NetworkDeduplicator:
         unique_id_dict = {}
         for idx, row in self.df.iterrows():
             if pd.notna(row['unique_id']):
-                unique_id_dict[str(row['unique_id'])] = {
+                # Strip whitespace from unique_id for consistent matching
+                unique_id_stripped = str(row['unique_id']).strip()
+                unique_id_dict[unique_id_stripped] = {
                     'row_num': row['original_row_number'],
                     'local_device': str(row['local_device']) if pd.notna(row['local_device']) else 'N/A',
                     'local_interface': str(row['local_interface']) if pd.notna(row['local_interface']) else 'N/A',
@@ -120,28 +196,58 @@ class NetworkDeduplicator:
                     'neighbor_interface': str(row['neighbor_interface']) if pd.notna(row['neighbor_interface']) else 'N/A'
                 }
         
+        self._log(f"Built unique_id dictionary with {len(unique_id_dict)} entries")
+        
         # Find rows where unique_id2 matches any unique_id
         self.df['is_duplicate'] = False
         self.df['matching_row'] = ''
         
+        matches_found = 0
         for idx, row in self.df.iterrows():
-            if row['unique_id2'] != '' and str(row['unique_id2']) in unique_id_dict:
-                self.df.at[idx, 'is_duplicate'] = True
-                matching_info = unique_id_dict[str(row['unique_id2'])]
-                self.df.at[idx, 'matching_row'] = matching_info['row_num']
+            if row['unique_id2'] != '':
+                unique_id2_stripped = str(row['unique_id2']).strip()
                 
-                # Store detailed duplicate information
-                self.duplicate_details.append({
-                    'deleted_row': row['original_row_number'],
-                    'deleted_connection': f"{str(row['local_device']) if pd.notna(row['local_device']) else 'N/A'}:{str(row['local_interface']) if pd.notna(row['local_interface']) else 'N/A'} <-> {str(row['neighbor_name']) if pd.notna(row['neighbor_name']) else 'N/A'}:{str(row['neighbor_interface']) if pd.notna(row['neighbor_interface']) else 'N/A'}",
-                    'kept_row': matching_info['row_num'],
-                    'kept_connection': f"{matching_info['local_device']}:{matching_info['local_interface']} <-> {matching_info['neighbor_name']}:{matching_info['neighbor_interface']}",
-                    'unique_id': str(row['unique_id']) if pd.notna(row['unique_id']) else 'N/A',
-                    'unique_id2': str(row['unique_id2'])
-                })
+                # Debug first few checks
+                if matches_found < 3 and unique_id2_stripped in unique_id_dict:
+                    self._log(f"\n  Match found for row {row['original_row_number']}:")
+                    self._log(f"    unique_id2: '{unique_id2_stripped}'")
+                    self._log(f"    matches unique_id of row {unique_id_dict[unique_id2_stripped]['row_num']}")
+                
+                if unique_id2_stripped in unique_id_dict:
+                    self.df.at[idx, 'is_duplicate'] = True
+                    matching_info = unique_id_dict[unique_id2_stripped]
+                    self.df.at[idx, 'matching_row'] = matching_info['row_num']
+                    matches_found += 1
+                    
+                    # Store detailed duplicate information
+                    self.duplicate_details.append({
+                        'deleted_row': row['original_row_number'],
+                        'deleted_connection': f"{str(row['local_device']) if pd.notna(row['local_device']) else 'N/A'}:{str(row['local_interface']) if pd.notna(row['local_interface']) else 'N/A'} <-> {str(row['neighbor_name']) if pd.notna(row['neighbor_name']) else 'N/A'}:{str(row['neighbor_interface']) if pd.notna(row['neighbor_interface']) else 'N/A'}",
+                        'kept_row': matching_info['row_num'],
+                        'kept_connection': f"{matching_info['local_device']}:{matching_info['local_interface']} <-> {matching_info['neighbor_name']}:{matching_info['neighbor_interface']}",
+                        'unique_id': str(row['unique_id']) if pd.notna(row['unique_id']) else 'N/A',
+                        'unique_id2': str(row['unique_id2'])
+                    })
         
         duplicates_count = self.df['is_duplicate'].sum()
-        self._log(f"Found {duplicates_count} duplicate connections")
+        self._log(f"\nFound {duplicates_count} duplicate connections")
+        
+        if duplicates_count == 0:
+            self._log("No duplicates found. Checking why:")
+            self._log(f"  - Rows with unique_id2: {len(self.df[self.df['unique_id2'] != ''])}")
+            self._log(f"  - Unique unique_id values: {len(unique_id_dict)}")
+            
+            # Show sample comparison
+            sample_with_id2 = self.df[self.df['unique_id2'] != ''].head(1)
+            if not sample_with_id2.empty:
+                sample_row = sample_with_id2.iloc[0]
+                self._log(f"\n  Sample row with unique_id2:")
+                self._log(f"    Row {sample_row['original_row_number']}: unique_id2 = '{sample_row['unique_id2']}'")
+                self._log(f"    Looking for match in unique_id dictionary...")
+                if str(sample_row['unique_id2']).strip() in unique_id_dict:
+                    self._log(f"    Found match!")
+                else:
+                    self._log(f"    No match found. This unique_id2 value doesn't exist in unique_id column.")
         
         # Remove duplicates
         self._log("Removing duplicate connections...")
@@ -176,6 +282,33 @@ class NetworkDeduplicator:
             f.write("-"*40 + "\n")
             for entry in self.log_entries:
                 f.write(entry + "\n")
+            
+            # Add unique_id2 comparison section only if df exists
+            if hasattr(self, 'df') and 'unique_id2' in self.df.columns:
+                f.write("\n" + "="*80 + "\n")
+                f.write("UNIQUE_ID2 VERIFICATION\n")
+                f.write("="*80 + "\n")
+                
+                # Get all rows with unique_id2
+                rows_with_id2 = self.df[self.df['unique_id2'] != '']
+                if not rows_with_id2.empty:
+                    f.write(f"Total rows with unique_id2: {len(rows_with_id2)}\n\n")
+                    f.write("Sample comparisons (first 10):\n")
+                    f.write("-"*40 + "\n")
+                    
+                    for idx, row in rows_with_id2.head(10).iterrows():
+                        f.write(f"\nRow {row['original_row_number']}:\n")
+                        f.write(f"  Local: {row['local_device']}:{row['local_interface']} -> Neighbor: {row['neighbor_name']}:{row['neighbor_interface']}\n")
+                        f.write(f"  unique_id:  '{row['unique_id']}'\n")
+                        f.write(f"  unique_id2: '{row['unique_id2']}'\n")
+                        
+                        # Check if unique_id2 matches any unique_id
+                        if str(row['unique_id2']).strip() in set(self.df['unique_id'].astype(str).str.strip()):
+                            f.write(f"  STATUS: ✓ MATCH FOUND - This is a duplicate\n")
+                        else:
+                            f.write(f"  STATUS: ✗ NO MATCH - unique_id2 doesn't match any unique_id\n")
+                else:
+                    f.write("No rows with unique_id2 were created.\n")
             
             # Write detailed duplicate information
             f.write("\n" + "="*80 + "\n")
@@ -216,6 +349,10 @@ class NetworkDeduplicator:
                     f.write(f"  {device}: {count} duplicate connections removed\n")
             else:
                 f.write("No duplicates found - all connections appear to be unique.\n")
+                f.write("\nPossible reasons:\n")
+                f.write("1. The unique_id field format doesn't match the expected concatenation\n")
+                f.write("2. There are no bidirectional connections in the data\n")
+                f.write("3. Check the unique_id2_debug_*.csv file to verify concatenation\n")
             
             f.write("\n" + "="*80 + "\n")
             f.write("END OF LOG\n")
@@ -254,9 +391,49 @@ class NetworkDeduplicator:
             for platform, count in platforms.items():
                 self._log(f"  {platform}: {count}")
     
+    def verify_unique_id_format(self):
+        """Verify and display the format of unique_id field in the CSV"""
+        self._log("\n" + "="*60)
+        self._log("VERIFYING UNIQUE_ID FORMAT")
+        self._log("="*60)
+        
+        # Check if unique_id column exists
+        if 'unique_id' not in self.df.columns:
+            self._log("ERROR: 'unique_id' column not found in CSV!")
+            return
+        
+        # Analyze a few rows to understand the unique_id format
+        sample_size = min(5, len(self.df))
+        self._log(f"\nAnalyzing first {sample_size} rows to understand unique_id format:")
+        
+        for i in range(sample_size):
+            row = self.df.iloc[i]
+            self._log(f"\nRow {i+2}:")
+            self._log(f"  local_device: '{row['local_device']}'")
+            self._log(f"  local_interface: '{row['local_interface']}'")
+            self._log(f"  neighbor_name: '{row['neighbor_name']}'")
+            self._log(f"  neighbor_interface: '{row['neighbor_interface']}'")
+            self._log(f"  unique_id: '{row['unique_id']}'")
+            
+            # Try to recreate what unique_id should be
+            expected_unique_id = (
+                str(row['local_device']).strip() +
+                str(row['local_interface']).strip() +
+                str(row['neighbor_name']).strip() +
+                str(row['neighbor_interface']).strip()
+            )
+            
+            if str(row['unique_id']).strip() == expected_unique_id:
+                self._log(f"  ✓ unique_id matches expected format (local_device+local_interface+neighbor_name+neighbor_interface)")
+            else:
+                self._log(f"  ✗ unique_id does NOT match expected format")
+                self._log(f"    Expected: '{expected_unique_id}'")
+                self._log(f"    Actual:   '{row['unique_id']}'")
+    
     def run_deduplication(self):
         """Run the complete deduplication process"""
         self.load_data()
+        self.verify_unique_id_format()  # Add verification step
         self.audit_bidirectional_connections()
         self.create_unique_id2()
         self.find_and_remove_duplicates()
@@ -706,6 +883,8 @@ def main():
         print("  1. deduplicated_neighbor_table.csv - Cleaned data without duplicates")
         print("  2. network_hierarchy.html - Interactive network diagram")
         print(f"  3. {deduplicator.log_file} - Detailed deduplication log")
+        print("  4. unique_id2_debug_*.csv - Debug file showing all unique_id2 values")
+        print("\nIMPORTANT: Open the unique_id2_debug file in Excel to verify concatenation!")
         
     except FileNotFoundError:
         print(f"\nError: File '{csv_file}' not found")
