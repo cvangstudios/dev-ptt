@@ -638,7 +638,18 @@ def collect_from_device(ip, username, password, enable_password=None):
             
             return cleaned
         
- interfaces
+        # ========== Combined neighbors CSV (CDP + LLDP) ==========
+        all_neighbors = []
+        unique_ids_seen = set()
+        duplicate_entries = []  # Track duplicates for logging
+        
+        # Process CDP data
+        for item in all_data['cdp_data']:
+            new_item = item.copy()
+            new_item['protocol'] = 'CDP'
+            new_item['local_device'] = hostname
+            
+            # Normalize interfaces
             new_item['local_interface'] = normalize_interface(new_item.get('local_interface', ''))
             new_item['neighbor_interface'] = normalize_interface(new_item.get('neighbor_interface', ''))
             
@@ -655,6 +666,13 @@ def collect_from_device(ip, username, password, enable_password=None):
                 all_neighbors.append(new_item)
             else:
                 print(f"    Skipping duplicate CDP entry: {unique_id}")
+                duplicate_entries.append({
+                    'protocol': 'CDP',
+                    'unique_id': unique_id,
+                    'local_interface': new_item.get('local_interface', ''),
+                    'neighbor_name': new_item.get('neighbor_name', ''),
+                    'neighbor_interface': new_item.get('neighbor_interface', '')
+                })
         
         # Process LLDP data
         for item in all_data['lldp_data']:
@@ -679,6 +697,36 @@ def collect_from_device(ip, username, password, enable_password=None):
                 all_neighbors.append(new_item)
             else:
                 print(f"    Skipping duplicate LLDP entry: {unique_id}")
+                duplicate_entries.append({
+                    'protocol': 'LLDP',
+                    'unique_id': unique_id,
+                    'local_interface': new_item.get('local_interface', ''),
+                    'neighbor_name': new_item.get('neighbor_name', ''),
+                    'neighbor_interface': new_item.get('neighbor_interface', '')
+                })
+        
+        # Write duplicate log file
+        duplicate_log_file = output_dir / 'duplicate_neighbors.txt'
+        with open(str(duplicate_log_file), 'w') as f:
+            f.write(f"Duplicate Neighbors Log\n")
+            f.write(f"Device: {hostname} ({ip})\n")
+            f.write(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write("="*80 + "\n\n")
+            
+            if duplicate_entries:
+                f.write(f"Found {len(duplicate_entries)} duplicate neighbor entries:\n\n")
+                for dup in duplicate_entries:
+                    f.write(f"Protocol: {dup['protocol']}\n")
+                    f.write(f"Local Interface: {dup['local_interface']}\n")
+                    f.write(f"Neighbor Name: {dup['neighbor_name']}\n")
+                    f.write(f"Neighbor Interface: {dup['neighbor_interface']}\n")
+                    f.write(f"Unique ID: {dup['unique_id']}\n")
+                    f.write("-"*40 + "\n")
+                f.write(f"\nSummary: Removed {len(duplicate_entries)} duplicates from all_neighbors.csv\n")
+            else:
+                f.write("No duplicate neighbors found.\n")
+        
+        print(f"    Duplicate log saved to duplicate_neighbors.txt")
         
         if all_neighbors:
             with open(str(output_dir / 'all_neighbors.csv'), 'w', newline='') as f:
@@ -694,7 +742,7 @@ def collect_from_device(ip, username, password, enable_password=None):
                 writer.writeheader()
                 writer.writerows(all_neighbors)
                 
-                print(f"    Created all_neighbors.csv with {len(all_neighbors)} entries (removed {len(all_data['cdp_data']) + len(all_data['lldp_data']) - len(all_neighbors)} duplicates)")
+                print(f"    Created all_neighbors.csv with {len(all_neighbors)} entries (removed {len(duplicate_entries)} duplicates)")
         else:
             # Still create empty file with headers
             with open(str(output_dir / 'all_neighbors.csv'), 'w', newline='') as f:
@@ -844,7 +892,7 @@ def collect_from_device(ip, username, password, enable_password=None):
                 'management_entries': mgmt_count,
                 'correlated_entries': len(all_data['correlated_data']),
                 'total_neighbors': len(all_neighbors),
-                'duplicates_removed': len(all_data['cdp_data']) + len(all_data['lldp_data']) - len(all_neighbors)
+                'duplicates_removed': len(duplicate_entries)
             },
             'files_created': {
                 'json_files': 10,  # Added management JSON
