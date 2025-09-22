@@ -116,58 +116,73 @@ class NetworkDeduplicator:
         """Create unique_id2 field for deduplication"""
         self._log("\nCreating unique_id2 field for deduplication...")
         
-        # Get all local devices
-        local_devices_set = set()
-        for device in self.df['local_device'].unique():
-            if pd.notna(device):
-                local_devices_set.add(str(device).strip())
-        
+        # Get all local devices - EXACTLY like test script
+        local_devices_set = set(self.df['local_device'].astype(str).str.strip())
         self._log(f"Found {len(local_devices_set)} unique local devices")
         
-        # Initialize unique_id2 column
+        # Initialize unique_id2 column - EXACTLY like test script
         self.df['unique_id2'] = ''
         
         # Show sample unique_id values
         self._log("\nSample unique_id values from CSV:")
         for i in range(min(3, len(self.df))):
-            if pd.notna(self.df.iloc[i]['unique_id']):
-                self._log(f"  Row {i+2}: '{self.df.iloc[i]['unique_id']}'")
+            self._log(f"  Row {i+2}: '{self.df.iloc[i]['unique_id']}'")
         
-        # Process each row using index
-        created_count = 0
+        # Process each row - EXACTLY like test script
+        count = 0
         for idx in self.df.index:
-            neighbor_name = str(self.df.at[idx, 'neighbor_name']).strip() if pd.notna(self.df.at[idx, 'neighbor_name']) else ''
+            neighbor_name = str(self.df.at[idx, 'neighbor_name']).strip()
             
-            if neighbor_name and neighbor_name in local_devices_set:
-                # Get the parts
+            if neighbor_name in local_devices_set:
+                # BUILD WITH UNDERSCORES - EXACTLY like test script
                 p1 = str(self.df.at[idx, 'neighbor_name']).strip()
                 p2 = str(self.df.at[idx, 'neighbor_interface']).strip()
                 p3 = str(self.df.at[idx, 'local_device']).strip()
                 p4 = str(self.df.at[idx, 'local_interface']).strip()
                 
-                # Create with underscores - EXACTLY like the test script that worked
+                # Create with underscores
                 unique_id2 = p1 + "_" + p2 + "_" + p3 + "_" + p4
                 
-                # Save to dataframe
+                # CRITICAL: Verify the value we're about to save
+                if count == 0:
+                    self._log(f"\nCRITICAL CHECK - Value we're about to save: '{unique_id2}'")
+                    self._log(f"Has underscores: {'YES' if '_' in unique_id2 else 'NO'}")
+                
                 self.df.at[idx, 'unique_id2'] = unique_id2
-                created_count += 1
+                
+                # CRITICAL: Verify it was saved correctly
+                saved_value = self.df.at[idx, 'unique_id2']
+                if count == 0:
+                    self._log(f"CRITICAL CHECK - Value actually saved: '{saved_value}'")
+                    self._log(f"Has underscores: {'YES' if '_' in saved_value else 'NO'}")
+                    if unique_id2 != saved_value:
+                        self._log("*** ERROR: Value changed during save! ***")
+                
+                count += 1
                 
                 # Show first 3
-                if created_count <= 3:
-                    row_num = self.df.at[idx, 'original_row_number']
-                    self._log(f"\nRow {row_num}:")
+                if count <= 3:
+                    self._log(f"\nRow {idx+2}:")
                     self._log(f"  Parts: '{p1}' + '_' + '{p2}' + '_' + '{p3}' + '_' + '{p4}'")
-                    self._log(f"  Result: '{unique_id2}'")
-                    self._log(f"  Underscores: {unique_id2.count('_')}")
+                    self._log(f"  Created: '{unique_id2}'")
+                    self._log(f"  Saved as: '{saved_value}'")
+                    self._log(f"  Underscores in saved value: {saved_value.count('_')}")
         
-        # Summary
-        self._log(f"\nCreated unique_id2 for {created_count} rows")
+        self._log(f"\nCreated {count} unique_id2 values")
         
-        # Verify underscores are present
-        if created_count > 0:
-            sample = self.df[self.df['unique_id2'] != ''].iloc[0]['unique_id2']
-            self._log(f"Sample unique_id2: '{sample}'")
-            self._log(f"Has underscores: {'YES' if '_' in sample else 'NO'}")
+        # Final verification
+        if count > 0:
+            # Check using iloc
+            sample_iloc = self.df[self.df['unique_id2'] != ''].iloc[0]['unique_id2']
+            self._log(f"\nFinal check using iloc: '{sample_iloc}'")
+            self._log(f"Has underscores: {'YES' if '_' in sample_iloc else 'NO'}")
+            
+            # Check using loc
+            non_empty = self.df[self.df['unique_id2'] != '']
+            if len(non_empty) > 0:
+                sample_loc = non_empty.iloc[0]['unique_id2']
+                self._log(f"Final check using loc: '{sample_loc}'")
+                self._log(f"Has underscores: {'YES' if '_' in sample_loc else 'NO'}")
         
         # Save debug file
         debug_file = self.save_unique_id2_debug_file()
@@ -178,6 +193,12 @@ class NetworkDeduplicator:
         debug_file = f"unique_id2_debug_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
         self._log(f"\nSaving unique_id2 debug file to {debug_file}...")
         
+        # IMPORTANT: Verify data BEFORE saving
+        test_rows = self.df[self.df['unique_id2'] != ''].head(3)
+        self._log("\nVERIFYING unique_id2 values BEFORE saving to CSV:")
+        for idx, row in test_rows.iterrows():
+            self._log(f"  Row {idx}: unique_id2 = '{row['unique_id2']}' (has underscore: {'YES' if '_' in str(row['unique_id2']) else 'NO'})")
+        
         # Create debug dataframe with relevant columns
         debug_df = self.df[['original_row_number', 'local_device', 'local_interface', 
                             'neighbor_name', 'neighbor_interface', 'unique_id', 'unique_id2']].copy()
@@ -185,30 +206,41 @@ class NetworkDeduplicator:
         # Add helper columns
         debug_df['has_unique_id2'] = debug_df['unique_id2'] != ''
         debug_df['unique_id2_has_underscore'] = debug_df['unique_id2'].apply(
-            lambda x: 'YES' if x and '_' in x else 'NO'
+            lambda x: 'YES' if x and '_' in str(x) else 'NO'
         )
         
         # Check if unique_id2 matches any unique_id
         unique_ids_set = set(self.df['unique_id'].astype(str).str.strip())
         debug_df['matches_a_unique_id'] = debug_df['unique_id2'].apply(
-            lambda x: 'YES' if x and x in unique_ids_set else 'NO' if x else ''
+            lambda x: 'YES' if x and str(x) in unique_ids_set else 'NO' if x else ''
         )
         
         # Sort to show rows with unique_id2 first
         debug_df = debug_df.sort_values('has_unique_id2', ascending=False)
         
-        # Save
+        # Save - ENSURE UTF-8 encoding
         debug_df.to_csv(debug_file, index=False, encoding='utf-8')
+        
+        # VERIFY what was saved
+        self._log("\nVERIFYING what was saved to CSV:")
+        test_read = pd.read_csv(debug_file, nrows=3)
+        for idx, row in test_read[test_read['unique_id2'] != ''].iterrows():
+            self._log(f"  Read back: unique_id2 = '{row['unique_id2']}' (has underscore: {'YES' if '_' in str(row['unique_id2']) else 'NO'})")
         
         # Summary
         rows_with_id2 = debug_df['has_unique_id2'].sum()
         rows_with_underscore = (debug_df['unique_id2_has_underscore'] == 'YES').sum()
         rows_with_match = (debug_df['matches_a_unique_id'] == 'YES').sum()
         
-        self._log(f"Debug file saved with {len(debug_df)} rows")
+        self._log(f"\nDebug file summary:")
+        self._log(f"  Total rows: {len(debug_df)}")
         self._log(f"  Rows with unique_id2: {rows_with_id2}")
         self._log(f"  Rows with underscores in unique_id2: {rows_with_underscore}")
         self._log(f"  Rows where unique_id2 matches a unique_id: {rows_with_match}")
+        
+        if rows_with_id2 > 0 and rows_with_underscore == 0:
+            self._log("\n*** PROBLEM DETECTED: unique_id2 has NO underscores! ***")
+            self._log("*** Something is stripping the underscores! ***")
         
         return debug_file
     
