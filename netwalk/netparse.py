@@ -26,6 +26,7 @@ import csv
 import json
 import argparse
 import logging
+import re
 from datetime import datetime
 from pathlib import Path
 from netmiko import ConnectHandler
@@ -424,21 +425,21 @@ class SimpleNetworkCollector:
         logger.info(f"Saved JSON with {len(data) if data else 0} entries: {filepath}")
         return filepath
     
-    def process_devices(self, command="show version"):
+    def process_devices(self):
         """
         Main processing function.
-        Connects to all devices, runs command, saves to CSV/JSON/RAW.
+        Connects to all devices, determines type, runs appropriate commands.
         """
         # Load devices
         devices = self.load_devices()
         if not devices:
             return
         
-        print(f"\nProcessing {len(devices)} devices with command: {command}")
+        print(f"\nProcessing {len(devices)} devices")
         print("="*60)
         
-        all_data = []
-        device_results = []  # For detailed JSON output
+        all_collected_data = {}  # Store all data by command
+        device_results = []
         success_count = 0
         failed_devices = []
         
@@ -458,74 +459,89 @@ class SimpleNetworkCollector:
                 })
                 continue
             
-            # Collect and parse data
-            data = self.collect_and_parse(connection, command, hostname, device_type)
+            # Load commands for this device type
+            commands = self.load_command_list(device_type)
             
-            if data:
-                all_data.extend(data)
-                success_count += 1
-                device_results.append({
-                    'host': host,
-                    'hostname': hostname,
-                    'device_type': device_type,
-                    'status': 'success',
-                    'entries_collected': len(data)
-                })
-            else:
-                device_results.append({
-                    'host': host,
-                    'hostname': hostname,
-                    'device_type': device_type,
-                    'status': 'no_data',
-                    'entries_collected': 0
-                })
+            if not commands:
+                logger.warning(f"No commands to run for {hostname}")
+                connection.disconnect()
+                continue
+            
+            print(f"  Device type: {device_type}")
+            print(f"  Running {len(commands)} commands")
+            
+            device_command_count = 0
+            
+            # Run each command from the list
+            for cmd_num, command in enumerate(commands, 1):
+                print(f"    [{cmd_num}/{len(commands)}] {command}")
+                
+                # Collect and parse data
+                data = self.collect_and_parse(connection, command, hostname, device_type)
+                
+                if data:
+                    # Store data by command for consolidated output
+                    if command not in all_collected_data:
+                        all_collected_data[command] = []
+                    all_collected_data[command].extend(data)
+                    device_command_count += 1
+            
+            success_count += 1
+            device_results.append({
+                'host': host,
+                'hostname': hostname,
+                'device_type': device_type,
+                'status': 'success',
+                'commands_run': device_command_count,
+                'total_commands': len(commands)
+            })
             
             # Disconnect
             connection.disconnect()
             logger.info(f"Disconnected from {hostname}")
         
-        # Save consolidated results
+        # Save consolidated results for each command
         print("\n" + "="*60)
         print("SUMMARY")
         print("="*60)
-        print(f"Successful: {success_count}/{len(devices)}")
+        print(f"Devices successful: {success_count}/{len(devices)}")
         
         if failed_devices:
-            print(f"Failed: {', '.join(failed_devices)}")
+            print(f"Failed devices: {', '.join(failed_devices)}")
         
-        if all_data:
+        # Save consolidated output for each command type
+        if all_collected_data:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            cmd_safe = command.replace(" ", "_").replace("/", "-")
             
-            # Save CSV (primary output)
-            csv_file = f"consolidated_{cmd_safe}_{timestamp}.csv"
-            csv_path = self.save_to_csv(all_data, csv_file)
+            print(f"\nConsolidated outputs saved:")
+            for command, data in all_collected_data.items():
+                if data:
+                    cmd_safe = command.replace(" ", "_").replace("/", "-")
+                    
+                    # Save CSV
+                    csv_file = f"consolidated_{cmd_safe}_{timestamp}.csv"
+                    csv_path = self.save_to_csv(data, csv_file)
+                    
+                    # Save JSON with metadata
+                    json_file = f"consolidated_{cmd_safe}_{timestamp}.json"
+                    json_metadata = {
+                        'command': command,
+                        'devices_processed': len(devices),
+                        'devices_successful': success_count,
+                        'devices_failed': len(failed_devices),
+                        'failed_devices': failed_devices,
+                        'device_results': device_results,
+                        'unique_device_types': list(set(d.get('_device_type', 'unknown') for d in data))
+                    }
+                    json_path = self.save_to_json(data, json_file, metadata=json_metadata)
+                    
+                    print(f"  {command}:")
+                    print(f"    CSV:  {csv_path}")
+                    print(f"    JSON: {json_path}")
+                    print(f"    Entries: {len(data)}")
             
-            # Save JSON (for debugging/validation)
-            json_file = f"consolidated_{cmd_safe}_{timestamp}.json"
-            json_metadata = {
-                'command': command,
-                'devices_processed': len(devices),
-                'devices_successful': success_count,
-                'devices_failed': len(failed_devices),
-                'failed_devices': failed_devices,
-                'device_results': device_results,
-                'unique_device_types': list(set(d.get('_device_type', 'unknown') for d in all_data))
-            }
-            json_path = self.save_to_json(all_data, json_file, metadata=json_metadata)
-            
-            print(f"\nOutputs saved:")
-            print(f"  Consolidated CSV:  {csv_path}")
-            print(f"  Consolidated JSON: {json_path}")
-            print(f"  Device folders:    {self.output_dir}/<hostname>/")
-            print(f"\nTotal entries collected: {len(all_data)}")
-            
-            # Show columns
-            if all_data[0]:
-                cols = [c for c in all_data[0].keys() if not c.startswith('_')]
-                print(f"Data columns: {', '.join(cols[:10])}")
-                if len(cols) > 10:
-                    print(f"              ... and {len(cols)-10} more columns")
+            print(f"\nDevice folders: {self.output_dir}/<hostname>/")
+            print(f"  (Contains raw output and parsed JSON for each command)")
         else:
             print("\nNo data collected from any device")
             
@@ -533,7 +549,6 @@ class SimpleNetworkCollector:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             json_file = f"failed_collection_{timestamp}.json"
             json_metadata = {
-                'command': command,
                 'devices_processed': len(devices),
                 'devices_successful': 0,
                 'devices_failed': len(failed_devices),
@@ -547,35 +562,50 @@ class SimpleNetworkCollector:
 def main():
     """Main entry point with argument parsing."""
     parser = argparse.ArgumentParser(
-        description='Simple network data collector - KISS approach with CSV/JSON/RAW output',
+        description='Smart network data collector with device-specific command lists',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
+Setup:
+  1. Create devices.txt with one IP/hostname per line:
+     192.168.1.1
+     192.168.1.2
+     switch1.domain.com
+     
+  2. Create command lists for your device types:
+     cisco_ios_commands.txt:
+       show version
+       show inventory
+       show cdp neighbors detail
+       show interfaces status
+       
+     arista_eos_commands.txt:
+       show version
+       show inventory
+       show lldp neighbors detail
+       show interfaces status
+       
 Examples:
   %(prog)s -u admin -p password
-  %(prog)s -u admin -p password -c "show interfaces status"
-  %(prog)s -u admin -p password -c "show cdp neighbors detail"
-  %(prog)s -u admin -p password -e enablepass -c "show vlan"
-  %(prog)s -u admin -p password --debug  # Enable debug logging
+  %(prog)s -u admin -p password -e enablepass
+  %(prog)s -u admin -p password --debug
+  %(prog)s -u admin -p password -f routers.txt
   
-Create devices.txt with one IP/hostname per line:
-  192.168.1.1
-  192.168.1.2
-  switch1.domain.com
-  # Comments start with #
-  
-Output: CSV (primary), JSON (debugging), RAW (validation)
+The script will:
+  1. Connect to each device
+  2. Auto-detect device type
+  3. Run commands from appropriate command list
+  4. Parse output with NTC templates
+  5. Save to device folders and consolidated files
         """
     )
     
     parser.add_argument('-u', '--username', required=True, help='Username for devices')
     parser.add_argument('-p', '--password', required=True, help='Password for devices')
     parser.add_argument('-e', '--enable', help='Enable password (defaults to login password)')
-    parser.add_argument('-c', '--command', default='show version', 
-                       help='Command to run (default: "show version")')
     parser.add_argument('-f', '--file', default='devices.txt',
                        help='Device file (default: devices.txt)')
     parser.add_argument('--debug', action='store_true',
-                       help='Enable debug logging (shows all file operations)')
+                       help='Enable debug logging')
     
     args = parser.parse_args()
     
@@ -595,8 +625,8 @@ Output: CSV (primary), JSON (debugging), RAW (validation)
     if args.file != 'devices.txt':
         collector.load_devices = lambda: collector.load_devices(args.file)
     
-    # Process devices
-    collector.process_devices(args.command)
+    # Process devices using command lists
+    collector.process_devices()
 
 
 if __name__ == "__main__":
@@ -604,125 +634,54 @@ if __name__ == "__main__":
 
 
 """
-SAMPLE devices.txt:
+SETUP FILES NEEDED:
 ===================
-# Core Switches
-192.168.1.1
-192.168.1.2
 
-# Distribution
-192.168.10.1
-192.168.10.2
+1. devices.txt - List of devices (one per line):
+   192.168.1.1
+   192.168.1.2
+   10.0.0.1
+   switch1.domain.com
+   # Comments start with #
 
-# Access Layer
-switch-access-01.domain.com
-switch-access-02.domain.com
+2. Command lists by device type:
 
-# WAN Routers
-10.0.0.1
-10.0.0.2
-
-
-USAGE EXAMPLES:
-===============
-
-1. Basic inventory collection:
-   python kiss_network.py -u admin -p cisco123
-
-2. Collect CDP neighbors:
-   python kiss_network.py -u admin -p cisco123 -c "show cdp neighbors detail"
-
-3. Collect interface status:
-   python kiss_network.py -u admin -p cisco123 -c "show interfaces status"
-
-4. Collect VLANs with enable password:
-   python kiss_network.py -u admin -p cisco123 -e enablepass -c "show vlan"
-
-5. Use different device file:
-   python kiss_network.py -u admin -p cisco123 -f routers.txt -c "show ip route"
-
-
-AUTO-DETECTION:
-===============
-The script automatically detects:
-- Cisco IOS
-- Cisco IOS-XE  
-- Cisco NX-OS
-- Cisco IOS-XR
-- Arista EOS
-- Juniper Junos
-
-And uses the appropriate NTC templates for each platform!
-
-
-OUTPUT STRUCTURE (ORGANIZED BY DEVICE):
-=========================================
-
-Each device gets its own folder with all its outputs:
-
-outputs/
-├── switch1/                              # Device-specific folder
-│   ├── show_version_20231025_143022.txt           # Raw output
-│   ├── show_version_20231025_143022.json          # Parsed JSON
-│   ├── show_cdp_neighbors_detail_20231025_143023.txt
-│   ├── show_cdp_neighbors_detail_20231025_143023.json
-│   └── show_interfaces_status_20231025_143024.txt
-├── switch2/
-│   ├── show_version_20231025_143030.txt
-│   ├── show_version_20231025_143030.json
-│   └── show_cdp_neighbors_detail_20231025_143031.txt
-├── router1/
-│   ├── show_version_20231025_143040.txt
-│   └── show_ip_route_20231025_143041.txt
-└── consolidated/                         # Combined results from all devices
-    ├── consolidated_show_cdp_neighbors_detail_20231025_143100.csv
-    └── consolidated_show_cdp_neighbors_detail_20231025_143100.json
-
-
-BENEFITS OF PER-DEVICE FOLDERS:
-================================
-1. Easy to find all data for a specific device
-2. Compare commands run at different times
-3. Keep history per device
-4. Troubleshoot specific devices
-5. Archive or delete device data independently
-
-
-OUTPUT FORMATS:
-===============
-
-Per-Device Folders:
-- RAW (.txt): Complete unmodified command output
-- JSON (.json): Parsed data with metadata for that device
-
-Consolidated Folder:
-- CSV: All devices combined, ready for Excel/reports
-- JSON: All devices with summary statistics
-
-Example: After running CDP discovery on 3 devices:
-- outputs/switch1/show_cdp_neighbors_detail_*.txt (raw)
-- outputs/switch1/show_cdp_neighbors_detail_*.json (parsed)
-- outputs/switch2/show_cdp_neighbors_detail_*.txt
-- outputs/switch2/show_cdp_neighbors_detail_*.json  
-- outputs/router1/show_cdp_neighbors_detail_*.txt
-- outputs/router1/show_cdp_neighbors_detail_*.json
-- outputs/consolidated/consolidated_show_cdp_neighbors_detail_*.csv (all combined)
-- outputs/consolidated/consolidated_show_cdp_neighbors_detail_*.json (all with stats)
-
-
-WHY THIS ORGANIZATION?
-======================
-- Device-Centric: All data for a device in one place
-- Easy Troubleshooting: "What did switch1 say about CDP?"
-- Historical Tracking: See all commands ever run on a device
-- Clean Organization: No mixing of different devices' outputs
-- Selective Archiving: Archive/delete specific device data
-
-The hostname is discovered automatically via:
-1. Device prompt (most reliable)
-2. 'show run | include hostname' (config check)  
-3. 'show version' output (fallback)
-4. Sanitized IP address (last resort)
-
-This ensures consistent folder naming even if devices have long prompts or domain names.
+   cisco_ios_commands.txt:
+   ========================
+   show version
+   show inventory
+   show cdp neighbors detail
+   show interfaces status
+   show ip interface brief
+   show vlan brief
+   show mac address-table
+   show ip arp
+   show spanning-tree summary
+   show ip route summary
+   
+   cisco_nxos_commands.txt:
+   =========================
+   show version
+   show inventory
+   show cdp neighbors detail
+   show interface status
+   show ip interface brief vrf all
+   show vlan brief
+   show mac address-table
+   show ip arp vrf all
+   show spanning-tree summary
+   show ip route summary vrf all
+   
+   arista_eos_commands.txt:
+   =========================
+   show version
+   show inventory
+   show lldp neighbors detail
+   show interfaces status
+   show ip interface brief
+   show vlan
+   show mac address-table
+   show ip arp
+   show spanning-tree summary
+   show ip route summary
 """
