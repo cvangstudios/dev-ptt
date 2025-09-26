@@ -301,7 +301,7 @@ class SimpleNetworkCollector:
     def collect_and_parse(self, connection, command, hostname, device_type):
         """
         Send command and parse with NTC templates.
-        Saves raw output and JSON in device-specific folder.
+        Saves raw output, JSON, and CSV in device-specific folder.
         
         Returns:
             List of dictionaries ready for CSV
@@ -350,6 +350,15 @@ class SimpleNetworkCollector:
                     }, f, indent=2, default=str)
                 logger.debug(f"Saved JSON output to {json_file}")
                 
+                # Save individual CSV to device folder
+                if parsed and len(parsed) > 0:
+                    csv_file = device_folder / f"{cmd_safe}_{timestamp}.csv"
+                    with open(csv_file, 'w', newline='') as f:
+                        writer = csv.DictWriter(f, fieldnames=parsed[0].keys())
+                        writer.writeheader()
+                        writer.writerows(parsed)
+                    logger.debug(f"Saved CSV output to {csv_file}")
+                
                 logger.info(f"Parsed {len(parsed)} entries from {hostname}")
                 return parsed
                 
@@ -375,6 +384,13 @@ class SimpleNetworkCollector:
                         'error': str(e),
                         'data': fallback_data
                     }, f, indent=2, default=str)
+                
+                # Save CSV even for unparsed data
+                csv_file = device_folder / f"{cmd_safe}_{timestamp}_unparsed.csv"
+                with open(csv_file, 'w', newline='') as f:
+                    writer = csv.DictWriter(f, fieldnames=fallback_data[0].keys())
+                    writer.writeheader()
+                    writer.writerows(fallback_data)
                 
                 return fallback_data
                 
