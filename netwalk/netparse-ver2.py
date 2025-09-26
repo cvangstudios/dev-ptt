@@ -153,6 +153,7 @@ class SimpleParallelCollector:
         2. Set terminal length 0 (FIRST THING)
         3. Run show version to detect type
         4. Get hostname
+        5. Create folder with hostname_IP format
         """
         try:
             # Start with generic cisco_ios for initial connection
@@ -196,10 +197,10 @@ class SimpleParallelCollector:
                             connection = ConnectHandler(**device)
                         except Exception as retry_error:
                             logger.error(f"Authentication still failed for {host}: {retry_error}")
-                            return None, None, None
+                            return None, None, None, None
                     else:
                         # Already tried new credentials, just fail this device
-                        return None, None, None
+                        return None, None, None, None
             
             # STEP 1: Set terminal length 0 (FIRST THING WE DO)
             try:
@@ -215,7 +216,7 @@ class SimpleParallelCollector:
             except Exception as e:
                 logger.error(f"Failed to get show version from {host}: {e}")
                 connection.disconnect()
-                return None, None, None
+                return None, None, None, None
             
             # STEP 3: Detect device type from show version
             device_type = 'cisco_ios'  # default
@@ -259,24 +260,28 @@ class SimpleParallelCollector:
             if not hostname:
                 hostname = host.replace('.', '_').replace(':', '_')
             
-            # Create device folder
-            device_folder = self.output_dir / hostname
+            # Create device folder with hostname and IP
+            # Format: hostname_IP (e.g., router1_192.168.1.1)
+            safe_host = host.replace(':', '-')  # For IPv6 addresses
+            folder_name = f"{hostname}_{safe_host}"
+            device_folder = self.output_dir / folder_name
             device_folder.mkdir(exist_ok=True)
             
-            logger.info(f"Connected to {hostname} ({device_type})")
+            logger.info(f"Connected to {hostname} ({device_type}) at {host}")
             
             # Save the show version output we already collected
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             version_file = device_folder / f"show_version_{timestamp}.txt"
             version_file.write_text(show_version_output)
             
-            return connection, hostname, device_type
+            # Return connection, hostname, device_type, and folder_name for consistency
+            return connection, hostname, device_type, folder_name
             
         except Exception as e:
             logger.error(f"Failed to connect to {host}: {e}")
-            return None, None, None
+            return None, None, None, None
     
-    def collect_and_parse(self, connection, command, hostname, device_type):
+    def collect_and_parse(self, connection, command, hostname, device_type, folder_name):
         """Send command and parse with NTC templates."""
         try:
             logger.info(f"Sending '{command}' to {hostname}")
@@ -285,7 +290,7 @@ class SimpleParallelCollector:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             cmd_safe = command.replace(" ", "_").replace("/", "-")
             
-            device_folder = self.output_dir / hostname
+            device_folder = self.output_dir / folder_name
             
             # Save raw output
             raw_file = device_folder / f"{cmd_safe}_{timestamp}.txt"
@@ -341,7 +346,7 @@ class SimpleParallelCollector:
     def process_single_device(self, host):
         """Process a single device."""
         # Connect to device
-        connection, hostname, device_type = self.connect_to_device(host)
+        connection, hostname, device_type, folder_name = self.connect_to_device(host)
         
         if not connection:
             with self.data_lock:
@@ -365,7 +370,7 @@ class SimpleParallelCollector:
                 if command.strip().lower() == 'show version':
                     continue
                     
-                data = self.collect_and_parse(connection, command, hostname, device_type)
+                data = self.collect_and_parse(connection, command, hostname, device_type, folder_name)
                 
                 if data:
                     # Thread-safe data storage
@@ -382,10 +387,11 @@ class SimpleParallelCollector:
                     'hostname': hostname,
                     'device_type': device_type,
                     'status': 'success',
-                    'commands_run': device_command_count
+                    'commands_run': device_command_count,
+                    'folder': folder_name
                 })
             
-            logger.info(f"Successfully processed {hostname}")
+            logger.info(f"Successfully processed {hostname} at {host}")
             return True
             
         except Exception as e:
@@ -507,7 +513,8 @@ class SimpleParallelCollector:
         # Save consolidated output
         self.save_consolidated_output()
         
-        print(f"\nDevice outputs: {self.output_dir}/<hostname>/")
+        print(f"\nDevice outputs: {self.output_dir}/<hostname>_<IP>/")
+        print(f"Example: {self.output_dir}/router1_192.168.1.1/")
 
 
 def main():
