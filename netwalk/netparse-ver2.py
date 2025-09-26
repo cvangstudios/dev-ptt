@@ -139,6 +139,8 @@ class SimpleNetworkCollector:
         # Get the appropriate command file
         command_file = command_files.get(device_type, f'{device_type}_commands.txt')
         
+        logger.info(f"Looking for command file for device type '{device_type}': {command_file}")
+        
         # Look for command file in current directory or commands subdirectory
         search_paths = [
             Path(command_file),
@@ -155,7 +157,8 @@ class SimpleNetworkCollector:
                 break
         
         if file_found:
-            logger.info(f"Loading commands from {file_found}")
+            logger.info(f"Loading commands from {file_found} for device type {device_type}")
+            print(f"  Loading commands from: {file_found}")
             with open(file_found, 'r') as f:
                 for line in f:
                     line = line.strip()
@@ -165,6 +168,7 @@ class SimpleNetworkCollector:
             logger.info(f"Loaded {len(commands)} commands for {device_type}")
         else:
             logger.warning(f"No command list found for {device_type}, trying default_commands.txt")
+            print(f"  WARNING: No {command_file} found, trying defaults")
             # Try default commands
             if Path('default_commands.txt').exists():
                 with open('default_commands.txt', 'r') as f:
@@ -189,16 +193,35 @@ class SimpleNetworkCollector:
             # Get show version output
             output = connection.send_command("show version")
             
-            # Check against known patterns
-            for pattern, device_type in self.device_type_map.items():
-                if pattern in output:
-                    logger.info(f"Detected device type: {device_type} (matched '{pattern}')")
-                    return device_type
+            # Convert to lowercase for case-insensitive matching
+            output_lower = output.lower()
             
-            # Default to cisco_ios if nothing matches
-            logger.warning("Could not detect device type, defaulting to cisco_ios")
-            return 'cisco_ios'
-            
+            # Check against known patterns (now case-insensitive)
+            # Check Arista first since it's being missed
+            if 'arista' in output_lower or 'eos' in output_lower or 'veos' in output_lower:
+                logger.info(f"Detected device type: arista_eos")
+                return 'arista_eos'
+            elif 'nx-os' in output_lower or 'nexus' in output_lower:
+                logger.info(f"Detected device type: cisco_nxos")
+                return 'cisco_nxos'
+            elif 'ios xe' in output_lower or 'ios-xe' in output_lower:
+                logger.info(f"Detected device type: cisco_ios")
+                return 'cisco_ios'
+            elif 'ios xr' in output_lower or 'ios-xr' in output_lower:
+                logger.info(f"Detected device type: cisco_xr")
+                return 'cisco_xr'
+            elif 'junos' in output_lower or 'juniper' in output_lower:
+                logger.info(f"Detected device type: juniper_junos")
+                return 'juniper_junos'
+            elif 'cisco ios' in output_lower or ('cisco' in output_lower and 'ios' in output_lower):
+                logger.info(f"Detected device type: cisco_ios")
+                return 'cisco_ios'
+            else:
+                # Default to cisco_ios if nothing matches
+                logger.warning(f"Could not detect device type from output, defaulting to cisco_ios")
+                logger.debug(f"First 500 chars of show version: {output[:500]}")
+                return 'cisco_ios'
+                
         except Exception as e:
             logger.error(f"Error detecting device type: {e}")
             return 'cisco_ios'
@@ -232,10 +255,14 @@ class SimpleNetworkCollector:
             # Now detect the actual device type from show version
             actual_device_type = self.detect_device_type(connection)
             
+            # Log what we detected
+            logger.info(f"Device {host} detected as: {actual_device_type}")
+            print(f"  Device type detected: {actual_device_type}")
+            
             # Update the connection's device type for proper command handling
             if actual_device_type != 'cisco_ios':
                 connection.device_type = actual_device_type
-                logger.info(f"Updated device type to: {actual_device_type}")
+                logger.info(f"Updated connection device type to: {actual_device_type}")
             
             # Get hostname - try multiple methods
             hostname = None
@@ -492,7 +519,7 @@ class SimpleNetworkCollector:
             # Extract display hostname
             display_hostname = hostname_folder.split('_')[0] if '_' in hostname_folder else hostname_folder
             
-            print(f"  → {display_hostname} ({host}): Running {len(commands)} commands on {device_type}")
+            print(f"  → {display_hostname} ({host}): Device type={device_type}, Loading {len(commands)} commands")
             
             # Run each command
             command_data = {}
@@ -1067,7 +1094,7 @@ Fix:   Normal - means no NTC template exists for that command/platform combo
             connection = ConnectHandler(**device)
             
             print(f"  SUCCESS: Connected to {host}")
-            logger.info(f"Connected to {host}")
+                        logger.info(f"Connected to {host}")
             
             # Now detect the actual device type from show version
             actual_device_type = self.detect_device_type(connection)
@@ -1140,11 +1167,6 @@ Fix:   Normal - means no NTC template exists for that command/platform combo
             return connection, folder_name, actual_device_type
             
         except Exception as e:
-            print(f"  FAILED: Connection to {host} failed")
-            print(f"  Error: {e}")
-            print(f"  Credentials used:")
-            print(f"    Username: '{self.username}'")
-            print(f"    Password length: {len(self.password)}")
             logger.error(f"Failed to connect to {host}: {e}")
             return None, None, None
     
@@ -1443,40 +1465,14 @@ Fix:   Normal - means no NTC template exists for that command/platform combo
 def main():
     """Main entry point with argument parsing."""
     parser = argparse.ArgumentParser(
-        description='Smart network data collector with device-specific command lists',
+        description='Smart network data collector with parallel processing',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Setup:
-  1. Create devices.txt with one IP/hostname per line:
-     192.168.1.1
-     192.168.1.2
-     switch1.domain.com
-     
-  2. Create command lists for your device types:
-     cisco_ios_commands.txt:
-       show version
-       show inventory
-       show cdp neighbors detail
-       show interfaces status
-       
-     arista_eos_commands.txt:
-       show version
-       show inventory
-       show lldp neighbors detail
-       show interfaces status
-       
-Examples:
-  %(prog)s -u admin -p password
-  %(prog)s -u admin -p password -e enablepass
-  %(prog)s -u admin -p password --debug
-  %(prog)s -u admin -p password -f routers.txt
+  1. Create devices.txt with one IP/hostname per line
+  2. Create command lists for your device types (e.g., cisco_ios_commands.txt)
   
-The script will:
-  1. Connect to each device
-  2. Auto-detect device type
-  3. Run commands from appropriate command list
-  4. Parse output with NTC templates
-  5. Save to device folders and consolidated files
+See usage examples at the end of this script for details.
         """
     )
     
@@ -1485,37 +1481,43 @@ The script will:
     parser.add_argument('-e', '--enable', help='Enable password (defaults to login password)')
     parser.add_argument('-f', '--file', default='devices.txt',
                        help='Device file (default: devices.txt)')
+    parser.add_argument('-w', '--workers', type=int, default=5,
+                       help='Max parallel workers (default: 5, recommended: 5-10)')
     parser.add_argument('--debug', action='store_true',
                        help='Enable debug logging')
     
     args = parser.parse_args()
     
-    # DEBUG: Show what was captured from command line
-    print("\n" + "="*60)
-    print("DEBUG: Command line arguments captured")
-    print(f"  Username from args: '{args.username}'")
-    print(f"  Password from args: '{args.password[:2] if len(args.password) > 2 else args.password}...' (length: {len(args.password)})")
-    print(f"  Enable from args: '{args.enable}' (None = use login password)")
-    print(f"  Device file: '{args.file}'")
-    print("="*60 + "\n")
+    # Validate worker count
+    if args.workers < 1:
+        print("Error: Workers must be at least 1")
+        sys.exit(1)
+    elif args.workers > 20:
+        print("Warning: Using more than 20 workers may overwhelm devices")
+        response = input("Continue anyway? (y/N): ")
+        if response.lower() != 'y':
+            sys.exit(0)
     
     # Set logging level
     if args.debug:
         logging.getLogger().setLevel(logging.DEBUG)
         logger.debug("Debug logging enabled")
     
-    # Create collector
+    # Create collector with parallel settings
     collector = SimpleNetworkCollector(
         username=args.username,
         password=args.password,
-        enable_password=args.enable
+        enable_password=args.enable,
+        max_workers=args.workers
     )
     
     # Override device file if specified
     if args.file != 'devices.txt':
         collector.load_devices = lambda: collector.load_devices(args.file)
     
-    # Process devices using command lists
+    print(f"Starting collection with {args.workers} parallel workers")
+    
+    # Process devices in parallel
     collector.process_devices()
 
 
