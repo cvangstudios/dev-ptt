@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
 """
-netparse-ver2.py
+kiss_network.py
 
-Smart network automation with parallel processing that:
+Smart network automation that:
 - Reads devices from simple text file (one IP per line)
 - Auto-detects device type from "show version"
 - Runs commands from device-specific command lists
 - Uses appropriate NTC templates automatically
-- Processes multiple devices in parallel for speed
 - Organizes output by device hostname
 
 Command lists:
@@ -18,9 +17,8 @@ Command lists:
 - juniper_junos_commands.txt
 
 Usage:
-    python netparse-ver2.py -u admin -p password
-    python netparse-ver2.py -u admin -p password -w 10
-    python netparse-ver2.py -u admin -p password --debug
+    python kiss_network.py -u admin -p password
+    python kiss_network.py -u admin -p password --debug
 """
 
 import sys
@@ -31,9 +29,6 @@ import logging
 import re
 from datetime import datetime
 from pathlib import Path
-from concurrent.futures import ThreadPoolExecutor, as_completed
-import threading
-
 from netmiko import ConnectHandler
 from ntc_templates.parse import parse_output
 
@@ -47,17 +42,15 @@ logger = logging.getLogger(__name__)
 
 class SimpleNetworkCollector:
     """
-    Simple network data collector with parallel processing.
+    Simple network data collector.
     Reads devices.txt, auto-detects device type, outputs CSV.
     """
     
-    def __init__(self, username, password, enable_password=None, max_workers=5):
-        """Initialize with credentials and parallel settings."""
+    def __init__(self, username, password, enable_password=None):
+        """Initialize with credentials."""
         self.username = username
         self.password = password
         self.enable_password = enable_password or password
-        self.max_workers = max_workers
-        self.lock = threading.Lock()  # For thread-safe operations
         
         # Create output directories
         self.output_dir = Path("outputs")
@@ -66,22 +59,21 @@ class SimpleNetworkCollector:
         # Consolidated outputs go here
         (self.output_dir / "consolidated").mkdir(exist_ok=True)
         
-        # Device type mapping - ordered from most specific to least specific
+        # Device type mapping based on show version output
         self.device_type_map = {
-            # Check specific versions first
-            'IOS XE': 'cisco_ios',
-            'IOS-XE': 'cisco_ios', 
+            'NX-OS': 'cisco_nxos',
+            'Nexus': 'cisco_nxos',
+            'IOS XE': 'cisco_ios',  # IOS-XE uses cisco_ios in netmiko
+            'IOS-XE': 'cisco_ios',
             'Cisco IOS XE': 'cisco_ios',
             'IOS XR': 'cisco_xr',
             'IOS-XR': 'cisco_xr',
-            'NX-OS': 'cisco_nxos',
-            'Nexus': 'cisco_nxos',
             'Arista EOS': 'arista_eos',
-            'vEOS': 'arista_eos',
             'EOS': 'arista_eos',
-            'JUNOS': 'juniper_junos',
+            'vEOS': 'arista_eos',
             'Junos': 'juniper_junos',
-            # Generic patterns last
+            'JUNOS': 'juniper_junos',
+            # Default fallback
             'Cisco IOS': 'cisco_ios',
             'IOS': 'cisco_ios',
         }
@@ -140,8 +132,6 @@ class SimpleNetworkCollector:
         # Get the appropriate command file
         command_file = command_files.get(device_type, f'{device_type}_commands.txt')
         
-        logger.info(f"Looking for command file: {command_file}")
-        
         # Look for command file in current directory or commands subdirectory
         search_paths = [
             Path(command_file),
@@ -168,7 +158,6 @@ class SimpleNetworkCollector:
             logger.info(f"Loaded {len(commands)} commands for {device_type}")
         else:
             logger.warning(f"No command list found for {device_type}, trying default_commands.txt")
-            print(f"  WARNING: {command_file} not found, using defaults")
             # Try default commands
             if Path('default_commands.txt').exists():
                 with open('default_commands.txt', 'r') as f:
@@ -193,17 +182,16 @@ class SimpleNetworkCollector:
             # Get show version output
             output = connection.send_command("show version")
             
-            # Check against known patterns - case insensitive
+            # Check against known patterns
             for pattern, device_type in self.device_type_map.items():
-                if pattern.lower() in output.lower():
+                if pattern in output:
                     logger.info(f"Detected device type: {device_type} (matched '{pattern}')")
                     return device_type
             
             # Default to cisco_ios if nothing matches
-            logger.warning(f"Could not detect device type, defaulting to cisco_ios")
-            logger.debug(f"First 500 chars of show version: {output[:500]}")
+            logger.warning("Could not detect device type, defaulting to cisco_ios")
             return 'cisco_ios'
-                
+            
         except Exception as e:
             logger.error(f"Error detecting device type: {e}")
             return 'cisco_ios'
@@ -219,13 +207,13 @@ class SimpleNetworkCollector:
         try:
             # Just connect as cisco_ios initially - it works for basic commands on most devices
             device = {
-                'device_type': 'cisco_ios',
+                'device_type': 'cisco_ios',  # Start with cisco_ios - works for most devices
                 'host': host,
                 'username': self.username,
                 'password': self.password,
                 'secret': self.enable_password,
                 'timeout': 30,
-                'global_delay_factor': 2,
+                'global_delay_factor': 2,  # Helps with slower devices
             }
             
             logger.info(f"Connecting to {host}...")
@@ -237,13 +225,10 @@ class SimpleNetworkCollector:
             # Now detect the actual device type from show version
             actual_device_type = self.detect_device_type(connection)
             
-            # Log what we detected
-            print(f"  Device type detected: {actual_device_type}")
-            
             # Update the connection's device type for proper command handling
             if actual_device_type != 'cisco_ios':
                 connection.device_type = actual_device_type
-                logger.info(f"Updated connection device type to: {actual_device_type}")
+                logger.info(f"Updated device type to: {actual_device_type}")
             
             # Get hostname - try multiple methods
             hostname = None
@@ -251,6 +236,7 @@ class SimpleNetworkCollector:
             # Method 1: Get from prompt (most reliable)
             try:
                 prompt = connection.find_prompt()
+                # Remove prompt characters and clean up
                 hostname = prompt.replace('#', '').replace('>', '').replace('(config)', '').strip()
                 logger.debug(f"Got hostname from prompt: {hostname}")
             except:
@@ -271,6 +257,7 @@ class SimpleNetworkCollector:
             if not hostname or hostname == host:
                 try:
                     output = connection.send_command("show version")
+                    # Try to find hostname in version output
                     match = re.search(r'^(\S+)\s+uptime', output, re.MULTILINE)
                     if match:
                         hostname = match.group(1)
@@ -284,7 +271,8 @@ class SimpleNetworkCollector:
                 logger.debug(f"Using sanitized host as hostname: {hostname}")
             
             # Create device-specific output folder with hostname_IP format
-            sanitized_host = host.replace(':', '_')
+            # Sanitize the host/IP for use in folder name
+            sanitized_host = host.replace(':', '_')  # For IPv6 addresses
             folder_name = f"{hostname}_{sanitized_host}"
             
             device_folder = self.output_dir / folder_name
@@ -301,6 +289,7 @@ class SimpleNetworkCollector:
                 connection.send_command("set cli screen-length 0")
             
             logger.info(f"Connected to {hostname} ({actual_device_type})")
+            # Return the folder name as hostname for consistency
             return connection, folder_name, actual_device_type
             
         except Exception as e:
@@ -343,6 +332,7 @@ class SimpleNetworkCollector:
                 )
                 
                 # Add hostname and device type to each entry
+                # Extract just the hostname part (before the underscore and IP)
                 actual_hostname = hostname.split('_')[0] if '_' in hostname else hostname
                 for entry in parsed:
                     entry['_hostname'] = actual_hostname
@@ -353,7 +343,7 @@ class SimpleNetworkCollector:
                 with open(json_file, 'w') as f:
                     json.dump({
                         'hostname': actual_hostname,
-                        'folder': hostname,
+                        'folder': hostname,  # This includes hostname_IP
                         'device_type': device_type,
                         'command': command,
                         'timestamp': timestamp,
@@ -375,7 +365,7 @@ class SimpleNetworkCollector:
                 return parsed
                 
             except Exception as e:
-                logger.warning(f"NTC parsing failed for {hostname}, {device_type}, {command}: {e}")
+                logger.warning(f"NTC parsing failed for {hostname}: {e}")
                 
                 # Still save JSON with raw output for debugging
                 json_file = device_folder / f"{cmd_safe}_{timestamp}_unparsed.json"
@@ -455,33 +445,39 @@ class SimpleNetworkCollector:
         logger.info(f"Saved JSON with {len(data) if data else 0} entries: {filepath}")
         return filepath
     
-    def process_single_device(self, host):
+    def process_devices(self):
         """
-        Process a single device - extracted for parallel execution.
-        Returns a dict with results.
+        Main processing function.
+        Connects to all devices, determines type, runs appropriate commands.
         """
-        print(f"[Thread-{threading.current_thread().name}] Starting: {host}")
+        # Load devices
+        devices = self.load_devices()
+        if not devices:
+            return
         
-        result = {
-            'host': host,
-            'status': 'failed',
-            'hostname': None,
-            'device_type': None,
-            'commands_run': 0,
-            'data': {}
-        }
+        print(f"\nProcessing {len(devices)} devices")
+        print("="*60)
         
-        try:
+        all_collected_data = {}  # Store all data by command
+        device_results = []
+        success_count = 0
+        failed_devices = []
+        
+        # Process each device
+        for i, host in enumerate(devices, 1):
+            print(f"\n[{i}/{len(devices)}] Processing {host}")
+            
             # Connect and detect type
             connection, hostname_folder, device_type = self.connect_to_device(host)
             
             if not connection:
-                print(f"  ✗ Failed to connect: {host}")
-                return result
-            
-            # Update result
-            result['hostname'] = hostname_folder
-            result['device_type'] = device_type
+                failed_devices.append(host)
+                device_results.append({
+                    'host': host,
+                    'status': 'failed',
+                    'error': 'Connection failed'
+                })
+                continue
             
             # Load commands for this device type
             commands = self.load_command_list(device_type)
@@ -489,113 +485,51 @@ class SimpleNetworkCollector:
             if not commands:
                 logger.warning(f"No commands to run for {hostname_folder}")
                 connection.disconnect()
-                result['status'] = 'no_commands'
-                return result
+                continue
             
-            # Extract display hostname
+            # Extract just hostname for display (before underscore)
             display_hostname = hostname_folder.split('_')[0] if '_' in hostname_folder else hostname_folder
             
-            print(f"  → {display_hostname} ({host}): Type={device_type}, Commands={len(commands)}")
+            print(f"  Hostname: {display_hostname}")
+            print(f"  IP Address: {host}")
+            print(f"  Device type: {device_type}")
+            print(f"  Running {len(commands)} commands")
             
-            # Run each command
-            command_data = {}
-            for command in commands:
+            device_command_count = 0
+            
+            # Run each command from the list
+            for cmd_num, command in enumerate(commands, 1):
+                print(f"    [{cmd_num}/{len(commands)}] {command}")
+                
+                # Collect and parse data - pass the folder name
                 data = self.collect_and_parse(connection, command, hostname_folder, device_type)
+                
                 if data:
-                    command_data[command] = data
-                    result['commands_run'] += 1
+                    # Store data by command for consolidated output
+                    if command not in all_collected_data:
+                        all_collected_data[command] = []
+                    all_collected_data[command].extend(data)
+                    device_command_count += 1
+            
+            success_count += 1
+            device_results.append({
+                'host': host,
+                'hostname': hostname_folder,  # This now includes hostname_IP
+                'device_type': device_type,
+                'status': 'success',
+                'commands_run': device_command_count,
+                'total_commands': len(commands)
+            })
             
             # Disconnect
             connection.disconnect()
             logger.info(f"Disconnected from {hostname_folder}")
-            
-            # Update result
-            result['status'] = 'success'
-            result['data'] = command_data
-            result['total_commands'] = len(commands)
-            
-            print(f"  ✓ Completed: {display_hostname} ({result['commands_run']}/{len(commands)} commands)")
-            
-        except Exception as e:
-            logger.error(f"Error processing {host}: {e}")
-            print(f"  ✗ Error: {host} - {str(e)[:50]}")
-            result['error'] = str(e)
         
-        return result
-    
-    def process_devices(self):
-        """
-        Main processing function with parallel execution.
-        Connects to devices concurrently for faster processing.
-        """
-        # Load devices
-        devices = self.load_devices()
-        if not devices:
-            return
-        
-        # Determine optimal worker count
-        worker_count = min(self.max_workers, len(devices))
-        
-        print(f"\nProcessing {len(devices)} devices")
-        print(f"Parallel mode: {worker_count} workers")
-        print("="*60)
-        
-        all_collected_data = {}
-        device_results = []
-        success_count = 0
-        failed_devices = []
-        
-        # Process devices in parallel
-        with ThreadPoolExecutor(max_workers=worker_count) as executor:
-            # Submit all devices for processing
-            future_to_device = {
-                executor.submit(self.process_single_device, device): device 
-                for device in devices
-            }
-            
-            # Process results as devices complete
-            completed = 0
-            for future in as_completed(future_to_device):
-                device = future_to_device[future]
-                completed += 1
-                
-                try:
-                    result = future.result(timeout=300)
-                    
-                    # Thread-safe update of results
-                    with self.lock:
-                        device_results.append(result)
-                        
-                        if result['status'] == 'success':
-                            success_count += 1
-                            
-                            # Merge command data
-                            for command, data in result['data'].items():
-                                if command not in all_collected_data:
-                                    all_collected_data[command] = []
-                                all_collected_data[command].extend(data)
-                        else:
-                            failed_devices.append(device)
-                    
-                    # Simple progress indicator
-                    print(f"Progress: {completed}/{len(devices)} devices completed")
-                    
-                except Exception as e:
-                    logger.error(f"Device {device} processing failed: {e}")
-                    with self.lock:
-                        failed_devices.append(device)
-                        device_results.append({
-                            'host': device,
-                            'status': 'failed',
-                            'error': str(e)
-                        })
-        
-        # Save consolidated results
+        # Save consolidated results for each command
         print("\n" + "="*60)
         print("SUMMARY")
         print("="*60)
         print(f"Devices successful: {success_count}/{len(devices)}")
-        print(f"Parallel workers used: {worker_count}")
         
         if failed_devices:
             print(f"Failed devices: {', '.join(failed_devices)}")
@@ -621,7 +555,6 @@ class SimpleNetworkCollector:
                         'devices_successful': success_count,
                         'devices_failed': len(failed_devices),
                         'failed_devices': failed_devices,
-                        'parallel_workers': worker_count,
                         'device_results': device_results,
                         'unique_device_types': list(set(d.get('_device_type', 'unknown') for d in data))
                     }
@@ -635,7 +568,7 @@ class SimpleNetworkCollector:
             print(f"\nDevice folders: {self.output_dir}/<hostname>_<IP>/")
             print(f"  (Contains raw, JSON, and CSV output for each command)")
             print(f"\nExample folders:")
-            for device in device_results[:3]:
+            for device in device_results[:3]:  # Show first 3 as examples
                 if device['status'] == 'success':
                     print(f"  {self.output_dir}/{device['hostname']}/")
         else:
@@ -649,7 +582,6 @@ class SimpleNetworkCollector:
                 'devices_successful': 0,
                 'devices_failed': len(failed_devices),
                 'failed_devices': failed_devices,
-                'parallel_workers': worker_count,
                 'device_results': device_results
             }
             json_path = self.save_to_json([], json_file, metadata=json_metadata)
@@ -659,14 +591,40 @@ class SimpleNetworkCollector:
 def main():
     """Main entry point with argument parsing."""
     parser = argparse.ArgumentParser(
-        description='Smart network data collector with parallel processing',
+        description='Smart network data collector with device-specific command lists',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Setup:
-  1. Create devices.txt with one IP/hostname per line
-  2. Create command lists for your device types (e.g., cisco_ios_commands.txt)
+  1. Create devices.txt with one IP/hostname per line:
+     192.168.1.1
+     192.168.1.2
+     switch1.domain.com
+     
+  2. Create command lists for your device types:
+     cisco_ios_commands.txt:
+       show version
+       show inventory
+       show cdp neighbors detail
+       show interfaces status
+       
+     arista_eos_commands.txt:
+       show version
+       show inventory
+       show lldp neighbors detail
+       show interfaces status
+       
+Examples:
+  %(prog)s -u admin -p password
+  %(prog)s -u admin -p password -e enablepass
+  %(prog)s -u admin -p password --debug
+  %(prog)s -u admin -p password -f routers.txt
   
-See usage examples at the end of this script for details.
+The script will:
+  1. Connect to each device
+  2. Auto-detect device type
+  3. Run commands from appropriate command list
+  4. Parse output with NTC templates
+  5. Save to device folders and consolidated files
         """
     )
     
@@ -675,43 +633,28 @@ See usage examples at the end of this script for details.
     parser.add_argument('-e', '--enable', help='Enable password (defaults to login password)')
     parser.add_argument('-f', '--file', default='devices.txt',
                        help='Device file (default: devices.txt)')
-    parser.add_argument('-w', '--workers', type=int, default=5,
-                       help='Max parallel workers (default: 5, recommended: 5-10)')
     parser.add_argument('--debug', action='store_true',
                        help='Enable debug logging')
     
     args = parser.parse_args()
-    
-    # Validate worker count
-    if args.workers < 1:
-        print("Error: Workers must be at least 1")
-        sys.exit(1)
-    elif args.workers > 20:
-        print("Warning: Using more than 20 workers may overwhelm devices")
-        response = input("Continue anyway? (y/N): ")
-        if response.lower() != 'y':
-            sys.exit(0)
     
     # Set logging level
     if args.debug:
         logging.getLogger().setLevel(logging.DEBUG)
         logger.debug("Debug logging enabled")
     
-    # Create collector with parallel settings
+    # Create collector
     collector = SimpleNetworkCollector(
         username=args.username,
         password=args.password,
-        enable_password=args.enable,
-        max_workers=args.workers
+        enable_password=args.enable
     )
     
     # Override device file if specified
     if args.file != 'devices.txt':
         collector.load_devices = lambda: collector.load_devices(args.file)
     
-    print(f"Starting collection with {args.workers} parallel workers")
-    
-    # Process devices in parallel
+    # Process devices using command lists
     collector.process_devices()
 
 
@@ -770,96 +713,4 @@ SETUP FILES NEEDED:
    show ip arp
    show spanning-tree summary
    show ip route summary
-
-
-USAGE EXAMPLES:
-===============
-
-# Basic usage (5 parallel workers by default):
-python netparse-ver2.py -u admin -p password
-
-# WITH SPECIAL CHARACTERS IN PASSWORD - USE QUOTES:
-python netparse-ver2.py -u admin -p 'pass^word'
-python netparse-ver2.py -u admin -p "p@$$word!"
-
-# Specify enable password if different from login:
-python netparse-ver2.py -u admin -p password -e enablepass
-
-# Custom device file (instead of devices.txt):
-python netparse-ver2.py -u admin -p password -f routers.txt
-python netparse-ver2.py -u admin -p password -f lab_devices.txt
-
-# Control parallel workers (default: 5, recommended: 5-10):
-python netparse-ver2.py -u admin -p password -w 10      # Faster processing
-python netparse-ver2.py -u admin -p password -w 3       # Conservative/production
-python netparse-ver2.py -u admin -p password -w 1       # Serial processing (safest)
-
-# Enable debug logging for troubleshooting:
-python netparse-ver2.py -u admin -p password --debug
-python netparse-ver2.py -u admin -p password -w 10 --debug
-
-# Combined options:
-python netparse-ver2.py -u admin -p 'pass^word' -e 'enable^pass' -f core_switches.txt -w 8
-python netparse-ver2.py -u netadmin -p 'p@$$w0rd!' -f datacenter.txt -w 10 --debug
-
-
-PARALLEL WORKERS GUIDE:
-=======================
-Workers | Use Case                        | Notes
---------|--------------------------------|----------------------------------
-1       | Troubleshooting/Serial         | Same as original script
-3       | Production/Sensitive           | Very safe, minimal load
-5       | Default/Recommended            | Good balance for most environments
-10      | Lab/Known Environment          | Faster, still safe
-15-20   | Large deployments              | Only if devices can handle it
-
-Rule of thumb: Start with 5, increase if no errors, decrease if connection issues
-
-
-OUTPUT STRUCTURE:
-=================
-outputs/
-├── consolidated/                       # Merged data from all devices
-│   ├── consolidated_show_version_*.csv
-│   ├── consolidated_show_version_*.json
-│   ├── consolidated_show_inventory_*.csv
-│   └── consolidated_show_inventory_*.json
-│
-└── <hostname>_<IP>/                    # Per-device outputs
-    ├── show_version_*.txt              # Raw output
-    ├── show_version_*.json             # Parsed JSON
-    ├── show_version_*.csv              # Parsed CSV
-    └── ...
-
-
-PERFORMANCE EXPECTATIONS:
-=========================
-Devices | Serial    | 5 Workers | 10 Workers
---------|-----------|-----------|------------
-10      | ~5 min    | ~1 min    | ~1 min
-50      | ~25 min   | ~5 min    | ~3 min
-100     | ~50 min   | ~10 min   | ~5 min
-500     | ~4 hours  | ~50 min   | ~25 min
-
-
-TROUBLESHOOTING:
-================
-Issue: "Authentication (password) failed"
-Fix:   Use quotes around passwords with special characters: -p 'pass^word'
-
-Issue: "Connection refused" or "Too many connections"
-Fix:   Reduce workers: -w 3
-
-Issue: Script running too slow
-Fix:   Increase workers: -w 10
-
-Issue: Can't connect to devices
-Fix:   Use -w 1 --debug to troubleshoot serially
-
-Issue: Some devices fail in parallel but work serially
-Fix:   Device may have SSH connection limit, use -w 3
-
-Issue: Unparsed CSV files
-Fix:   Normal - means no NTC template exists for that command/platform combo
-       Check the warning messages to see which device type was detected
 """
