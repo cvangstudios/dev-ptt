@@ -1,24 +1,19 @@
 #!/usr/bin/env python3
 """
-kiss_network.py
+netparse_parallel.py
 
-Smart network automation that:
-- Reads devices from simple text file (one IP per line)
-- Auto-detects device type from "show version"
-- Runs commands from device-specific command lists
-- Uses appropriate NTC templates automatically
-- Organizes output by device hostname
-
-Command lists:
-- cisco_ios_commands.txt
-- cisco_nxos_commands.txt
-- cisco_xr_commands.txt
-- arista_eos_commands.txt
-- juniper_junos_commands.txt
+Simple parallel network automation that:
+- Connects and immediately sets terminal length 0
+- Detects device type from "show version" 
+- Runs appropriate commands for each device type
+- Processes devices in parallel for speed
+- Retries only on authentication failure with new credentials
+- Keeps everything simple and reliable
 
 Usage:
-    python kiss_network.py -u admin -p password
-    python kiss_network.py -u admin -p password --debug
+    python netparse_parallel.py -u admin -p password
+    python netparse_parallel.py -u admin -p password --workers 10
+    python netparse_parallel.py -u admin -p password --sequential  # disable parallel
 """
 
 import sys
@@ -27,9 +22,13 @@ import json
 import argparse
 import logging
 import re
+import getpass
 from datetime import datetime
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from threading import Lock
 from netmiko import ConnectHandler
+from netmiko.exceptions import AuthenticationException, NetmikoAuthenticationException
 from ntc_templates.parse import parse_output
 
 # Setup logging
@@ -40,57 +39,57 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-class SimpleNetworkCollector:
+class SimpleParallelCollector:
     """
-    Simple network data collector.
-    Reads devices.txt, auto-detects device type, outputs CSV.
+    Simple parallel network collector with smart device detection.
     """
     
-    def __init__(self, username, password, enable_password=None):
+    def __init__(self, username, password, enable_password=None, max_workers=5):
         """Initialize with credentials."""
         self.username = username
         self.password = password
         self.enable_password = enable_password or password
+        self.max_workers = max_workers
+        
+        # Thread-safe storage
+        self.all_collected_data = {}
+        self.device_results = []
+        self.failed_devices = []
+        self.data_lock = Lock()
+        
+        # Track if we've already prompted for new credentials
+        self.credentials_updated = False
+        self.cred_lock = Lock()
         
         # Create output directories
         self.output_dir = Path("outputs")
         self.output_dir.mkdir(exist_ok=True)
-        
-        # Consolidated outputs go here
         (self.output_dir / "consolidated").mkdir(exist_ok=True)
         
-        # Device type mapping based on show version output
-        self.device_type_map = {
-            'NX-OS': 'cisco_nxos',
-            'Nexus': 'cisco_nxos',
-            'IOS XE': 'cisco_ios',  # IOS-XE uses cisco_ios in netmiko
-            'IOS-XE': 'cisco_ios',
-            'Cisco IOS XE': 'cisco_ios',
-            'IOS XR': 'cisco_xr',
-            'IOS-XR': 'cisco_xr',
-            'Arista EOS': 'arista_eos',
-            'EOS': 'arista_eos',
-            'vEOS': 'arista_eos',
-            'Junos': 'juniper_junos',
-            'JUNOS': 'juniper_junos',
-            # Default fallback
-            'Cisco IOS': 'cisco_ios',
-            'IOS': 'cisco_ios',
-        }
+        # Device type patterns for detection
+        self.device_type_patterns = [
+            # Check NX-OS first (before generic IOS)
+            (r'NX-OS|Nexus', 'cisco_nxos'),
+            # IOS-XR
+            (r'IOS[\s-]XR|IOS-XR', 'cisco_xr'),
+            # IOS-XE (uses cisco_ios driver)
+            (r'IOS[\s-]XE|IOS-XE|Cisco IOS XE', 'cisco_ios'),
+            # Arista
+            (r'Arista|EOS|vEOS', 'arista_eos'),
+            # Juniper
+            (r'JUNOS|Junos|junos', 'juniper_junos'),
+            # Generic IOS (check last)
+            (r'Cisco IOS|IOS', 'cisco_ios'),
+        ]
     
     def load_devices(self, filename="devices.txt"):
-        """
-        Load devices from simple text file.
-        One IP or hostname per line.
-        Lines starting with # are comments.
-        """
+        """Load devices from simple text file."""
         devices = []
         
         try:
             with open(filename, 'r') as f:
                 for line in f:
                     line = line.strip()
-                    # Skip empty lines and comments
                     if line and not line.startswith('#'):
                         devices.append(line)
             
@@ -100,230 +99,200 @@ class SimpleNetworkCollector:
         except FileNotFoundError:
             logger.error(f"File not found: {filename}")
             print(f"\nPlease create {filename} with one IP/hostname per line")
-            print("Example:")
-            print("192.168.1.1")
-            print("192.168.1.2")
-            print("switch1.domain.com")
             return []
     
     def load_command_list(self, device_type):
-        """
-        Load command list for specific device type.
-        
-        Looks for files like:
-        - cisco_ios_commands.txt
-        - cisco_nxos_commands.txt
-        - arista_eos_commands.txt
-        
-        Returns:
-            List of commands to run on this device type
-        """
-        # Map device types to command list files
+        """Load command list for specific device type."""
         command_files = {
             'cisco_ios': 'cisco_ios_commands.txt',
             'cisco_nxos': 'cisco_nxos_commands.txt',
             'cisco_xr': 'cisco_xr_commands.txt',
-            'cisco_iosxr': 'cisco_xr_commands.txt',
             'arista_eos': 'arista_eos_commands.txt',
             'juniper_junos': 'juniper_junos_commands.txt',
-            'juniper': 'juniper_junos_commands.txt',
         }
         
-        # Get the appropriate command file
         command_file = command_files.get(device_type, f'{device_type}_commands.txt')
         
-        # Look for command file in current directory or commands subdirectory
+        # Look for command file
         search_paths = [
             Path(command_file),
             Path('commands') / command_file,
-            Path('.') / command_file
         ]
-        
-        commands = []
-        file_found = None
         
         for filepath in search_paths:
             if filepath.exists():
-                file_found = filepath
-                break
-        
-        if file_found:
-            logger.info(f"Loading commands from {file_found}")
-            with open(file_found, 'r') as f:
-                for line in f:
-                    line = line.strip()
-                    # Skip empty lines and comments
-                    if line and not line.startswith('#'):
-                        commands.append(line)
-            logger.info(f"Loaded {len(commands)} commands for {device_type}")
-        else:
-            logger.warning(f"No command list found for {device_type}, trying default_commands.txt")
-            # Try default commands
-            if Path('default_commands.txt').exists():
-                with open('default_commands.txt', 'r') as f:
+                commands = []
+                with open(filepath, 'r') as f:
                     for line in f:
                         line = line.strip()
                         if line and not line.startswith('#'):
                             commands.append(line)
-                logger.info(f"Loaded {len(commands)} default commands")
-            else:
-                # Fallback to basic commands
-                logger.warning("No command lists found, using basic defaults")
-                commands = ['show version', 'show inventory']
+                logger.info(f"Loaded {len(commands)} commands for {device_type}")
+                return commands
         
-        return commands
+        # Default commands if no file found
+        logger.warning(f"No command list found for {device_type}, using defaults")
+        return ['show version', 'show inventory']
     
-    def detect_device_type(self, connection):
-        """
-        Auto-detect device type from show version.
-        Returns the detected netmiko device_type string.
-        """
-        try:
-            # Get show version output
-            output = connection.send_command("show version")
-            
-            # Check against known patterns
-            for pattern, device_type in self.device_type_map.items():
-                if pattern in output:
-                    logger.info(f"Detected device type: {device_type} (matched '{pattern}')")
-                    return device_type
-            
-            # Default to cisco_ios if nothing matches
-            logger.warning("Could not detect device type, defaulting to cisco_ios")
-            return 'cisco_ios'
-            
-        except Exception as e:
-            logger.error(f"Error detecting device type: {e}")
-            return 'cisco_ios'
+    def prompt_for_credentials(self):
+        """Prompt user for new credentials."""
+        print("\n⚠️  Authentication failed. Please enter new credentials:")
+        new_username = input("Username: ")
+        new_password = getpass.getpass("Password: ")
+        new_enable = getpass.getpass("Enable password (press Enter to use same as login): ")
+        
+        if not new_enable:
+            new_enable = new_password
+        
+        return new_username, new_password, new_enable
     
     def connect_to_device(self, host):
         """
-        Connect to device and detect type from show version.
-        No redundant auto-detection - just connect and check.
-        
-        Returns:
-            tuple: (connection, hostname, device_type) or (None, None, None) if failed
+        Connect to device with proper sequence:
+        1. Connect
+        2. Set terminal length 0 (FIRST THING)
+        3. Run show version to detect type
+        4. Get hostname
         """
         try:
-            # Just connect as cisco_ios initially - it works for basic commands on most devices
+            # Start with generic cisco_ios for initial connection
             device = {
-                'device_type': 'cisco_ios',  # Start with cisco_ios - works for most devices
+                'device_type': 'cisco_ios',
                 'host': host,
                 'username': self.username,
                 'password': self.password,
                 'secret': self.enable_password,
                 'timeout': 30,
-                'global_delay_factor': 2,  # Helps with slower devices
+                'global_delay_factor': 2,
             }
             
             logger.info(f"Connecting to {host}...")
             
-            # Simple connection - no autodetect
-            connection = ConnectHandler(**device)
-            logger.info(f"Connected to {host}")
+            try:
+                connection = ConnectHandler(**device)
+            except (AuthenticationException, NetmikoAuthenticationException) as auth_error:
+                logger.error(f"Authentication failed for {host}: {auth_error}")
+                
+                # Check if we should prompt for new credentials
+                with self.cred_lock:
+                    if not self.credentials_updated:
+                        # Prompt for new credentials
+                        new_user, new_pass, new_enable = self.prompt_for_credentials()
+                        
+                        # Update credentials for all future connections
+                        self.username = new_user
+                        self.password = new_pass
+                        self.enable_password = new_enable
+                        self.credentials_updated = True
+                        
+                        print("Retrying with new credentials...")
+                        
+                        # Try again with new credentials
+                        device['username'] = self.username
+                        device['password'] = self.password
+                        device['secret'] = self.enable_password
+                        
+                        try:
+                            connection = ConnectHandler(**device)
+                        except Exception as retry_error:
+                            logger.error(f"Authentication still failed for {host}: {retry_error}")
+                            return None, None, None
+                    else:
+                        # Already tried new credentials, just fail this device
+                        return None, None, None
             
-            # Now detect the actual device type from show version
-            actual_device_type = self.detect_device_type(connection)
+            # STEP 1: Set terminal length 0 (FIRST THING WE DO)
+            try:
+                connection.send_command("terminal length 0")
+                logger.debug(f"Set terminal length 0 for {host}")
+            except:
+                # Some devices might not support it, continue anyway
+                logger.debug(f"Could not set terminal length for {host}")
             
-            # Update the connection's device type for proper command handling
-            if actual_device_type != 'cisco_ios':
-                connection.device_type = actual_device_type
-                logger.info(f"Updated device type to: {actual_device_type}")
+            # STEP 2: Get show version to detect device type
+            try:
+                show_version_output = connection.send_command("show version")
+            except Exception as e:
+                logger.error(f"Failed to get show version from {host}: {e}")
+                connection.disconnect()
+                return None, None, None
             
-            # Get hostname - try multiple methods
+            # STEP 3: Detect device type from show version
+            device_type = 'cisco_ios'  # default
+            for pattern, detected_type in self.device_type_patterns:
+                if re.search(pattern, show_version_output, re.IGNORECASE):
+                    device_type = detected_type
+                    logger.info(f"Detected {host} as {detected_type}")
+                    break
+            
+            # Update connection with correct device type
+            connection.device_type = device_type
+            
+            # For Juniper, set screen length after detection
+            if 'juniper' in device_type:
+                try:
+                    connection.send_command("set cli screen-length 0")
+                    logger.debug(f"Set screen length 0 for Juniper {host}")
+                except:
+                    pass
+            
+            # STEP 4: Get hostname
             hostname = None
-            
-            # Method 1: Get from prompt (most reliable)
             try:
                 prompt = connection.find_prompt()
-                # Remove prompt characters and clean up
                 hostname = prompt.replace('#', '').replace('>', '').replace('(config)', '').strip()
-                logger.debug(f"Got hostname from prompt: {hostname}")
+                hostname = hostname.strip('[]')  # Remove brackets if present
             except:
                 pass
             
-            # Method 2: Get from 'show run | include hostname'
+            # Try to get hostname from config if prompt didn't work
             if not hostname or hostname == host:
                 try:
                     output = connection.send_command("show run | include hostname")
                     match = re.search(r'hostname\s+(\S+)', output)
                     if match:
                         hostname = match.group(1)
-                        logger.debug(f"Got hostname from config: {hostname}")
                 except:
                     pass
             
-            # Method 3: Get from 'show version' (we already have this output)
-            if not hostname or hostname == host:
-                try:
-                    output = connection.send_command("show version")
-                    # Try to find hostname in version output
-                    match = re.search(r'^(\S+)\s+uptime', output, re.MULTILINE)
-                    if match:
-                        hostname = match.group(1)
-                        logger.debug(f"Got hostname from show version: {hostname}")
-                except:
-                    pass
-            
-            # Final fallback: use the IP/host provided
+            # Fallback hostname
             if not hostname:
                 hostname = host.replace('.', '_').replace(':', '_')
-                logger.debug(f"Using sanitized host as hostname: {hostname}")
             
-            # Create device-specific output folder with hostname_IP format
-            # Sanitize the host/IP for use in folder name
-            sanitized_host = host.replace(':', '_')  # For IPv6 addresses
-            folder_name = f"{hostname}_{sanitized_host}"
-            
-            device_folder = self.output_dir / folder_name
+            # Create device folder
+            device_folder = self.output_dir / hostname
             device_folder.mkdir(exist_ok=True)
-            logger.debug(f"Created device folder: {device_folder}")
             
-            # Store the folder name for later use
-            self.device_folder = device_folder
+            logger.info(f"Connected to {hostname} ({device_type})")
             
-            # Set terminal length 0 for Cisco/Arista devices
-            if 'cisco' in actual_device_type or 'arista' in actual_device_type:
-                connection.send_command("terminal length 0")
-            elif 'juniper' in actual_device_type:
-                connection.send_command("set cli screen-length 0")
+            # Save the show version output we already collected
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            version_file = device_folder / f"show_version_{timestamp}.txt"
+            version_file.write_text(show_version_output)
             
-            logger.info(f"Connected to {hostname} ({actual_device_type})")
-            # Return the folder name as hostname for consistency
-            return connection, folder_name, actual_device_type
+            return connection, hostname, device_type
             
         except Exception as e:
             logger.error(f"Failed to connect to {host}: {e}")
             return None, None, None
     
     def collect_and_parse(self, connection, command, hostname, device_type):
-        """
-        Send command and parse with NTC templates.
-        Saves raw output, JSON, and CSV in device-specific folder.
-        Note: hostname parameter now contains "hostname_IP" format.
-        
-        Returns:
-            List of dictionaries ready for CSV
-        """
+        """Send command and parse with NTC templates."""
         try:
-            # Send command
             logger.info(f"Sending '{command}' to {hostname}")
-            raw_output = connection.send_command(command)
+            raw_output = connection.send_command(command, delay_factor=2)
             
-            # Create timestamp for this collection
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             cmd_safe = command.replace(" ", "_").replace("/", "-")
             
-            # Device-specific folder (hostname already includes IP)
             device_folder = self.output_dir / hostname
-            device_folder.mkdir(exist_ok=True)
             
-            # Save raw output to device folder
+            # Save raw output
             raw_file = device_folder / f"{cmd_safe}_{timestamp}.txt"
             raw_file.write_text(raw_output)
             logger.debug(f"Saved raw output to {raw_file}")
             
-            # Parse with NTC templates
+            # Try to parse with NTC templates
             try:
                 parsed = parse_output(
                     platform=device_type,
@@ -331,386 +300,267 @@ class SimpleNetworkCollector:
                     data=raw_output
                 )
                 
-                # Add hostname and device type to each entry
-                # Extract just the hostname part (before the underscore and IP)
-                actual_hostname = hostname.split('_')[0] if '_' in hostname else hostname
+                # Add metadata to each entry
                 for entry in parsed:
-                    entry['_hostname'] = actual_hostname
+                    entry['_hostname'] = hostname
                     entry['_device_type'] = device_type
                 
-                # Save parsed JSON to device folder
-                json_file = device_folder / f"{cmd_safe}_{timestamp}.json"
-                with open(json_file, 'w') as f:
-                    json.dump({
-                        'hostname': actual_hostname,
-                        'folder': hostname,  # This includes hostname_IP
-                        'device_type': device_type,
-                        'command': command,
-                        'timestamp': timestamp,
-                        'parsed_entries': len(parsed),
-                        'data': parsed
-                    }, f, indent=2, default=str)
-                logger.debug(f"Saved JSON output to {json_file}")
-                
-                # Save individual CSV to device folder
-                if parsed and len(parsed) > 0:
+                # Save parsed JSON
+                if parsed:
+                    json_file = device_folder / f"{cmd_safe}_{timestamp}.json"
+                    with open(json_file, 'w') as f:
+                        json.dump({
+                            'hostname': hostname,
+                            'device_type': device_type,
+                            'command': command,
+                            'timestamp': timestamp,
+                            'parsed_entries': len(parsed),
+                            'data': parsed
+                        }, f, indent=2, default=str)
+                    
+                    # Save CSV
                     csv_file = device_folder / f"{cmd_safe}_{timestamp}.csv"
                     with open(csv_file, 'w', newline='') as f:
                         writer = csv.DictWriter(f, fieldnames=parsed[0].keys())
                         writer.writeheader()
                         writer.writerows(parsed)
-                    logger.debug(f"Saved CSV output to {csv_file}")
                 
                 logger.info(f"Parsed {len(parsed)} entries from {hostname}")
                 return parsed
                 
             except Exception as e:
-                logger.warning(f"NTC parsing failed for {hostname}: {e}")
-                
-                # Still save JSON with raw output for debugging
-                json_file = device_folder / f"{cmd_safe}_{timestamp}_unparsed.json"
-                actual_hostname = hostname.split('_')[0] if '_' in hostname else hostname
-                fallback_data = [{
-                    '_hostname': actual_hostname,
-                    '_device_type': device_type,
-                    'raw_output': raw_output[:500] + '...' if len(raw_output) > 500 else raw_output,
-                    'parse_error': str(e)
-                }]
-                
-                with open(json_file, 'w') as f:
-                    json.dump({
-                        'hostname': actual_hostname,
-                        'folder': hostname,
-                        'device_type': device_type,
-                        'command': command,
-                        'timestamp': timestamp,
-                        'parse_status': 'failed',
-                        'error': str(e),
-                        'data': fallback_data
-                    }, f, indent=2, default=str)
-                
-                # Save CSV even for unparsed data
-                csv_file = device_folder / f"{cmd_safe}_{timestamp}_unparsed.csv"
-                with open(csv_file, 'w', newline='') as f:
-                    writer = csv.DictWriter(f, fieldnames=fallback_data[0].keys())
-                    writer.writeheader()
-                    writer.writerows(fallback_data)
-                
-                return fallback_data
+                logger.debug(f"NTC parsing not available for {command} on {device_type}")
+                # Return unparsed data
+                return [{'_hostname': hostname, '_device_type': device_type, 
+                        '_command': command, '_timestamp': timestamp}]
                 
         except Exception as e:
-            logger.error(f"Error collecting from {hostname}: {e}")
+            logger.error(f"Error collecting '{command}' from {hostname}: {e}")
             return []
     
-    def save_to_csv(self, data, filename):
-        """Save data to CSV file in consolidated folder."""
-        if not data:
-            logger.warning("No data to save to CSV")
-            return None
+    def process_single_device(self, host):
+        """Process a single device."""
+        # Connect to device
+        connection, hostname, device_type = self.connect_to_device(host)
         
-        filepath = self.output_dir / "consolidated" / filename
+        if not connection:
+            with self.data_lock:
+                self.failed_devices.append(host)
+                self.device_results.append({
+                    'host': host,
+                    'status': 'failed',
+                    'error': 'Connection failed'
+                })
+            return False
         
-        with open(filepath, 'w', newline='') as f:
-            writer = csv.DictWriter(f, fieldnames=data[0].keys())
-            writer.writeheader()
-            writer.writerows(data)
-        
-        logger.info(f"Saved {len(data)} rows to CSV: {filepath}")
-        return filepath
+        try:
+            # Load commands for this device type
+            commands = self.load_command_list(device_type)
+            
+            device_command_count = 0
+            
+            # Run each command
+            for command in commands:
+                # Skip "show version" since we already ran it
+                if command.strip().lower() == 'show version':
+                    continue
+                    
+                data = self.collect_and_parse(connection, command, hostname, device_type)
+                
+                if data:
+                    # Thread-safe data storage
+                    with self.data_lock:
+                        if command not in self.all_collected_data:
+                            self.all_collected_data[command] = []
+                        self.all_collected_data[command].extend(data)
+                    device_command_count += 1
+            
+            # Store results
+            with self.data_lock:
+                self.device_results.append({
+                    'host': host,
+                    'hostname': hostname,
+                    'device_type': device_type,
+                    'status': 'success',
+                    'commands_run': device_command_count
+                })
+            
+            logger.info(f"Successfully processed {hostname}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error processing {hostname}: {e}")
+            with self.data_lock:
+                self.failed_devices.append(host)
+            return False
+            
+        finally:
+            try:
+                connection.disconnect()
+                logger.info(f"Disconnected from {hostname}")
+            except:
+                pass
     
-    def save_to_json(self, data, filename, metadata=None):
-        """
-        Save data to JSON file in consolidated folder.
-        Includes summary information for debugging.
-        """
-        if not data and not metadata:
-            logger.warning("No data to save to JSON")
-            return None
+    def save_consolidated_output(self):
+        """Save all collected data to consolidated files."""
+        if not self.all_collected_data:
+            print("\nNo data collected from any device")
+            return
         
-        filepath = self.output_dir / "consolidated" / filename
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         
-        output = {
-            'collection_timestamp': datetime.now().isoformat(),
-            'total_entries': len(data) if data else 0
-        }
-        
-        if metadata:
-            output.update(metadata)
-        
-        output['data'] = data
-        
-        with open(filepath, 'w') as f:
-            json.dump(output, f, indent=2, default=str)
-        
-        logger.info(f"Saved JSON with {len(data) if data else 0} entries: {filepath}")
-        return filepath
+        print(f"\nConsolidated outputs:")
+        for command, data in self.all_collected_data.items():
+            if data:
+                cmd_safe = command.replace(" ", "_").replace("/", "-")
+                
+                # Save CSV
+                csv_file = self.output_dir / "consolidated" / f"{cmd_safe}_{timestamp}.csv"
+                try:
+                    with open(csv_file, 'w', newline='') as f:
+                        writer = csv.DictWriter(f, fieldnames=data[0].keys())
+                        writer.writeheader()
+                        writer.writerows(data)
+                    print(f"  {command}: {csv_file} ({len(data)} entries)")
+                except Exception as e:
+                    logger.error(f"Failed to save CSV for {command}: {e}")
+                
+                # Save JSON with metadata
+                json_file = self.output_dir / "consolidated" / f"{cmd_safe}_{timestamp}.json"
+                try:
+                    with open(json_file, 'w') as f:
+                        json.dump({
+                            'command': command,
+                            'timestamp': timestamp,
+                            'total_entries': len(data),
+                            'devices': list(set(d.get('_hostname', 'unknown') for d in data)),
+                            'data': data
+                        }, f, indent=2, default=str)
+                except Exception as e:
+                    logger.error(f"Failed to save JSON for {command}: {e}")
     
-    def process_devices(self):
-        """
-        Main processing function.
-        Connects to all devices, determines type, runs appropriate commands.
-        """
+    def process_devices_parallel(self, devices):
+        """Process devices in parallel."""
+        print(f"\nProcessing {len(devices)} devices in parallel (workers: {self.max_workers})")
+        print("="*60)
+        
+        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+            # Submit all tasks
+            futures = {executor.submit(self.process_single_device, host): host 
+                      for host in devices}
+            
+            # Wait for completion
+            completed = 0
+            for future in as_completed(futures):
+                completed += 1
+                host = futures[future]
+                try:
+                    success = future.result(timeout=300)
+                    status = "✓" if success else "✗"
+                    print(f"[{completed}/{len(devices)}] {status} {host}")
+                except Exception as e:
+                    print(f"[{completed}/{len(devices)}] ✗ {host} - {str(e)[:50]}")
+    
+    def process_devices_sequential(self, devices):
+        """Process devices one by one."""
+        print(f"\nProcessing {len(devices)} devices sequentially")
+        print("="*60)
+        
+        for i, host in enumerate(devices, 1):
+            print(f"[{i}/{len(devices)}] Processing {host}...")
+            success = self.process_single_device(host)
+            status = "✓" if success else "✗"
+            print(f"[{i}/{len(devices)}] {status} {host}")
+    
+    def process(self, parallel=True):
+        """Main processing function."""
         # Load devices
         devices = self.load_devices()
         if not devices:
             return
         
-        print(f"\nProcessing {len(devices)} devices")
-        print("="*60)
+        # Clear any previous data
+        self.all_collected_data = {}
+        self.device_results = []
+        self.failed_devices = []
+        self.credentials_updated = False
         
-        all_collected_data = {}  # Store all data by command
-        device_results = []
-        success_count = 0
-        failed_devices = []
+        # Process devices
+        if parallel:
+            self.process_devices_parallel(devices)
+        else:
+            self.process_devices_sequential(devices)
         
-        # Process each device
-        for i, host in enumerate(devices, 1):
-            print(f"\n[{i}/{len(devices)}] Processing {host}")
-            
-            # Connect and detect type
-            connection, hostname_folder, device_type = self.connect_to_device(host)
-            
-            if not connection:
-                failed_devices.append(host)
-                device_results.append({
-                    'host': host,
-                    'status': 'failed',
-                    'error': 'Connection failed'
-                })
-                continue
-            
-            # Load commands for this device type
-            commands = self.load_command_list(device_type)
-            
-            if not commands:
-                logger.warning(f"No commands to run for {hostname_folder}")
-                connection.disconnect()
-                continue
-            
-            # Extract just hostname for display (before underscore)
-            display_hostname = hostname_folder.split('_')[0] if '_' in hostname_folder else hostname_folder
-            
-            print(f"  Hostname: {display_hostname}")
-            print(f"  IP Address: {host}")
-            print(f"  Device type: {device_type}")
-            print(f"  Running {len(commands)} commands")
-            
-            device_command_count = 0
-            
-            # Run each command from the list
-            for cmd_num, command in enumerate(commands, 1):
-                print(f"    [{cmd_num}/{len(commands)}] {command}")
-                
-                # Collect and parse data - pass the folder name
-                data = self.collect_and_parse(connection, command, hostname_folder, device_type)
-                
-                if data:
-                    # Store data by command for consolidated output
-                    if command not in all_collected_data:
-                        all_collected_data[command] = []
-                    all_collected_data[command].extend(data)
-                    device_command_count += 1
-            
-            success_count += 1
-            device_results.append({
-                'host': host,
-                'hostname': hostname_folder,  # This now includes hostname_IP
-                'device_type': device_type,
-                'status': 'success',
-                'commands_run': device_command_count,
-                'total_commands': len(commands)
-            })
-            
-            # Disconnect
-            connection.disconnect()
-            logger.info(f"Disconnected from {hostname_folder}")
-        
-        # Save consolidated results for each command
+        # Print summary
         print("\n" + "="*60)
         print("SUMMARY")
         print("="*60)
-        print(f"Devices successful: {success_count}/{len(devices)}")
         
-        if failed_devices:
-            print(f"Failed devices: {', '.join(failed_devices)}")
+        success_count = len([r for r in self.device_results if r['status'] == 'success'])
+        print(f"Successful: {success_count}/{len(devices)}")
         
-        # Save consolidated output for each command type
-        if all_collected_data:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            
-            print(f"\nConsolidated outputs saved:")
-            for command, data in all_collected_data.items():
-                if data:
-                    cmd_safe = command.replace(" ", "_").replace("/", "-")
-                    
-                    # Save CSV
-                    csv_file = f"consolidated_{cmd_safe}_{timestamp}.csv"
-                    csv_path = self.save_to_csv(data, csv_file)
-                    
-                    # Save JSON with metadata
-                    json_file = f"consolidated_{cmd_safe}_{timestamp}.json"
-                    json_metadata = {
-                        'command': command,
-                        'devices_processed': len(devices),
-                        'devices_successful': success_count,
-                        'devices_failed': len(failed_devices),
-                        'failed_devices': failed_devices,
-                        'device_results': device_results,
-                        'unique_device_types': list(set(d.get('_device_type', 'unknown') for d in data))
-                    }
-                    json_path = self.save_to_json(data, json_file, metadata=json_metadata)
-                    
-                    print(f"  {command}:")
-                    print(f"    CSV:  {csv_path}")
-                    print(f"    JSON: {json_path}")
-                    print(f"    Entries: {len(data)}")
-            
-            print(f"\nDevice folders: {self.output_dir}/<hostname>_<IP>/")
-            print(f"  (Contains raw, JSON, and CSV output for each command)")
-            print(f"\nExample folders:")
-            for device in device_results[:3]:  # Show first 3 as examples
-                if device['status'] == 'success':
-                    print(f"  {self.output_dir}/{device['hostname']}/")
-        else:
-            print("\nNo data collected from any device")
-            
-            # Still save summary JSON even if no data
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            json_file = f"failed_collection_{timestamp}.json"
-            json_metadata = {
-                'devices_processed': len(devices),
-                'devices_successful': 0,
-                'devices_failed': len(failed_devices),
-                'failed_devices': failed_devices,
-                'device_results': device_results
-            }
-            json_path = self.save_to_json([], json_file, metadata=json_metadata)
-            print(f"Summary saved to: {json_path}")
+        if self.failed_devices:
+            print(f"Failed: {len(self.failed_devices)}")
+            for device in self.failed_devices:
+                print(f"  - {device}")
+        
+        # Save consolidated output
+        self.save_consolidated_output()
+        
+        print(f"\nDevice outputs: {self.output_dir}/<hostname>/")
 
 
 def main():
-    """Main entry point with argument parsing."""
+    """Main entry point."""
     parser = argparse.ArgumentParser(
-        description='Smart network data collector with device-specific command lists',
+        description='Simple parallel network collector with device auto-detection',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Setup:
-  1. Create devices.txt with one IP/hostname per line:
+  1. Create devices.txt:
      192.168.1.1
      192.168.1.2
-     switch1.domain.com
      
-  2. Create command lists for your device types:
-     cisco_ios_commands.txt:
-       show version
-       show inventory
-       show cdp neighbors detail
-       show interfaces status
-       
-     arista_eos_commands.txt:
-       show version
-       show inventory
-       show lldp neighbors detail
-       show interfaces status
-       
+  2. Create command lists:
+     cisco_ios_commands.txt
+     cisco_nxos_commands.txt
+     arista_eos_commands.txt
+     
 Examples:
-  %(prog)s -u admin -p password
-  %(prog)s -u admin -p password -e enablepass
-  %(prog)s -u admin -p password --debug
-  %(prog)s -u admin -p password -f routers.txt
-  
-The script will:
-  1. Connect to each device
-  2. Auto-detect device type
-  3. Run commands from appropriate command list
-  4. Parse output with NTC templates
-  5. Save to device folders and consolidated files
+  %(prog)s -u admin -p password                    # Parallel (default)
+  %(prog)s -u admin -p password --workers 10       # More parallel workers
+  %(prog)s -u admin -p password --sequential       # Disable parallel
         """
     )
     
-    parser.add_argument('-u', '--username', required=True, help='Username for devices')
-    parser.add_argument('-p', '--password', required=True, help='Password for devices')
+    parser.add_argument('-u', '--username', required=True, help='Username')
+    parser.add_argument('-p', '--password', required=True, help='Password')
     parser.add_argument('-e', '--enable', help='Enable password (defaults to login password)')
-    parser.add_argument('-f', '--file', default='devices.txt',
-                       help='Device file (default: devices.txt)')
-    parser.add_argument('--debug', action='store_true',
-                       help='Enable debug logging')
+    parser.add_argument('-f', '--file', default='devices.txt', help='Device file')
+    parser.add_argument('--workers', type=int, default=5, help='Parallel workers (default: 5)')
+    parser.add_argument('--sequential', action='store_true', help='Disable parallel processing')
+    parser.add_argument('--debug', action='store_true', help='Enable debug logging')
     
     args = parser.parse_args()
     
-    # Set logging level
     if args.debug:
         logging.getLogger().setLevel(logging.DEBUG)
-        logger.debug("Debug logging enabled")
     
     # Create collector
-    collector = SimpleNetworkCollector(
+    collector = SimpleParallelCollector(
         username=args.username,
         password=args.password,
-        enable_password=args.enable
+        enable_password=args.enable,
+        max_workers=args.workers
     )
     
     # Override device file if specified
     if args.file != 'devices.txt':
         collector.load_devices = lambda: collector.load_devices(args.file)
     
-    # Process devices using command lists
-    collector.process_devices()
+    # Process devices
+    collector.process(parallel=not args.sequential)
 
 
 if __name__ == "__main__":
     main()
-
-
-"""
-SETUP FILES NEEDED:
-===================
-
-1. devices.txt - List of devices (one per line):
-   192.168.1.1
-   192.168.1.2
-   10.0.0.1
-   switch1.domain.com
-   # Comments start with #
-
-2. Command lists by device type:
-
-   cisco_ios_commands.txt:
-   ========================
-   show version
-   show inventory
-   show cdp neighbors detail
-   show interfaces status
-   show ip interface brief
-   show vlan brief
-   show mac address-table
-   show ip arp
-   show spanning-tree summary
-   show ip route summary
-   
-   cisco_nxos_commands.txt:
-   =========================
-   show version
-   show inventory
-   show cdp neighbors detail
-   show interface status
-   show ip interface brief vrf all
-   show vlan brief
-   show mac address-table
-   show ip arp vrf all
-   show spanning-tree summary
-   show ip route summary vrf all
-   
-   arista_eos_commands.txt:
-   =========================
-   show version
-   show inventory
-   show lldp neighbors detail
-   show interfaces status
-   show ip interface brief
-   show vlan
-   show mac address-table
-   show ip arp
-   show spanning-tree summary
-   show ip route summary
-"""
