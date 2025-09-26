@@ -205,42 +205,37 @@ class SimpleNetworkCollector:
     
     def connect_to_device(self, host):
         """
-        Connect to device and detect type from show version.
-        No redundant auto-detection - just connect and check.
+        Simplified connection method - matches standard Netmiko usage.
+        Connects as cisco_ios and detects actual type for reference only.
         
         Returns:
             tuple: (connection, hostname, device_type) or (None, None, None) if failed
         """
         try:
-            # Just connect as cisco_ios initially - it works for basic commands on most devices
+            # Simple connection parameters - same as typical Netmiko scripts
             device = {
-                'device_type': 'cisco_ios',  # Start with cisco_ios - works for most devices
+                'device_type': 'cisco_ios',  # Standard cisco_ios for all devices
                 'host': host,
                 'username': self.username,
                 'password': self.password,
                 'secret': self.enable_password,
-                'timeout': 30,
-                'global_delay_factor': 2,  # Helps with slower devices
+                # Only add these if you need them:
+                # 'timeout': 30,
+                # 'global_delay_factor': 2,
             }
             
             logger.info(f"Connecting to {host}...")
             
-            # Simple connection - no autodetect
+            # Standard Netmiko connection
             connection = ConnectHandler(**device)
             logger.info(f"Connected to {host}")
             
-            # Now detect the actual device type from show version
+            # Detect actual device type for reference (but don't modify connection)
             actual_device_type = self.detect_device_type(connection)
+            logger.info(f"Detected device type: {actual_device_type}")
             
-            # Update the connection's device type for proper command handling
-            if actual_device_type != 'cisco_ios':
-                connection.device_type = actual_device_type
-                logger.info(f"Updated device type to: {actual_device_type}")
-            
-            # Get hostname - try multiple methods
+            # Get hostname from prompt
             hostname = None
-            
-            # Method 1: Get from prompt (most reliable)
             try:
                 prompt = connection.find_prompt()
                 # Remove prompt characters and clean up
@@ -249,36 +244,12 @@ class SimpleNetworkCollector:
             except:
                 pass
             
-            # Method 2: Get from 'show run | include hostname'
-            if not hostname or hostname == host:
-                try:
-                    output = connection.send_command("show run | include hostname")
-                    match = re.search(r'hostname\s+(\S+)', output)
-                    if match:
-                        hostname = match.group(1)
-                        logger.debug(f"Got hostname from config: {hostname}")
-                except:
-                    pass
-            
-            # Method 3: Get from 'show version' (we already have this output)
-            if not hostname or hostname == host:
-                try:
-                    output = connection.send_command("show version")
-                    # Try to find hostname in version output
-                    match = re.search(r'^(\S+)\s+uptime', output, re.MULTILINE)
-                    if match:
-                        hostname = match.group(1)
-                        logger.debug(f"Got hostname from show version: {hostname}")
-                except:
-                    pass
-            
-            # Final fallback: use the IP/host provided
+            # Fallback: use sanitized IP as hostname
             if not hostname:
                 hostname = host.replace('.', '_').replace(':', '_')
                 logger.debug(f"Using sanitized host as hostname: {hostname}")
             
             # Create device-specific output folder with hostname_IP format
-            # Sanitize the host/IP for use in folder name
             sanitized_host = host.replace(':', '_')  # For IPv6 addresses
             folder_name = f"{hostname}_{sanitized_host}"
             
@@ -286,17 +257,22 @@ class SimpleNetworkCollector:
             device_folder.mkdir(exist_ok=True)
             logger.debug(f"Created device folder: {device_folder}")
             
-            # Store the folder name for later use
-            self.device_folder = device_folder
+            # Set terminal length for complete output
+            try:
+                if 'cisco' in actual_device_type or 'arista' in actual_device_type:
+                    connection.send_command("terminal length 0")
+                elif 'juniper' in actual_device_type:
+                    connection.send_command("set cli screen-length 0")
+                else:
+                    # Default cisco command since we connected as cisco_ios
+                    connection.send_command("terminal length 0")
+            except:
+                # If terminal length fails, continue anyway
+                pass
             
-            # Set terminal length 0 for Cisco/Arista devices
-            if 'cisco' in actual_device_type or 'arista' in actual_device_type:
-                connection.send_command("terminal length 0")
-            elif 'juniper' in actual_device_type:
-                connection.send_command("set cli screen-length 0")
+            logger.info(f"Connected to {hostname} (detected as {actual_device_type})")
             
-            logger.info(f"Connected to {hostname} ({actual_device_type})")
-            # Return the folder name as hostname for consistency
+            # Return connection with detected type (but connection stays as cisco_ios)
             return connection, folder_name, actual_device_type
             
         except Exception as e:
