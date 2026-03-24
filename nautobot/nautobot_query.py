@@ -487,6 +487,39 @@ def drill_down_loop(url, token, devices, term, default_csv_name):
 
 
 # =======================================================
+# SHARED: EMPTY SEARCH TERM HANDLER
+# =======================================================
+
+def handle_empty_term():
+    """
+    Called whenever a search prompt receives no input.
+    Asks the user if they want to search all, re-enter, or return to menu.
+
+    Returns:
+        "all"    — proceed with no filter (search all)
+        "retry"  — loop back and ask for a term again
+        "return" — return to the calling menu
+    """
+    print("\n  No search term entered. What would you like to do?")
+    divider("-")
+    print("  1. Search all  (may return large results)")
+    print("  2. Re-enter search term")
+    print("  3. Return to menu")
+    divider("-")
+
+    while True:
+        choice = input("  Select: ").strip()
+        if choice == "1":
+            return "all"
+        elif choice == "2":
+            return "retry"
+        elif choice == "3":
+            return "return"
+        else:
+            print("  [!] Invalid — enter 1, 2, or 3.")
+
+
+# =======================================================
 # OPTION 1 — GLOBAL SEARCH
 # =======================================================
 
@@ -494,6 +527,7 @@ def global_search_by_device_name(url, token):
     """
     Search devices by name using contains (partial) matching.
     Filter: name__ic=term
+    Empty term — prompts user to search all, re-enter, or return.
     """
     while True:
         print("\n")
@@ -502,38 +536,45 @@ def global_search_by_device_name(url, token):
         print("  Partial match — 'spine' matches abc-spine-01, dc-spine-02")
         divider()
 
-        term = input(
-            "  Enter search term or press Enter to return: "
-        ).strip()
+        term = input("  Enter search term: ").strip()
 
         if not term:
-            return
+            action = handle_empty_term()
+            if action == "return":
+                return
+            elif action == "retry":
+                continue
+            elif action == "all":
+                term      = None
+                params    = {"limit": 0}
+                label     = "ALL DEVICES"
+            else:
+                continue
+        else:
+            params = {"name__ic": term, "limit": 0}
+            label  = term
 
-        print(f"\n[*] Searching device names for: '{term}' ...")
+        print(f"\n[*] Searching device names for: '{label}' ...")
 
-        devices = api_get(
-            url, token,
-            "/api/dcim/devices/",
-            params={"name__ic": term, "limit": 0},
-        )
+        devices = api_get(url, token, "/api/dcim/devices/", params=params)
 
         if not devices:
-            print(f"  [!] No devices found matching name: '{term}'")
+            print(f"  [!] No devices found matching: '{label}'")
             input("  Press Enter to search again...")
             continue
 
-        summary_rows = display_device_summary(devices, term)
+        summary_rows = display_device_summary(devices, label)
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         prompt_save_csv(
             rows             = summary_rows,
             fieldnames       = SUMMARY_FIELDS,
-            default_filename = f"search_name_{term}_{timestamp}.csv",
+            default_filename = f"search_name_{label}_{timestamp}.csv",
         )
 
         search_again = drill_down_loop(
-            url, token, devices, term,
-            f"device_{term}_{timestamp}.csv",
+            url, token, devices, label,
+            f"device_{label}_{timestamp}.csv",
         )
         if not search_again:
             return
@@ -552,23 +593,33 @@ def global_search_by_ip(url, token):
         print("  Partial match — '10.0.0' matches 10.0.0.1/32, 10.0.0.2/32")
         divider()
 
-        term = input(
-            "  Enter IP or partial IP or press Enter to return: "
-        ).strip()
+        term = input("  Enter IP or partial IP: ").strip()
 
         if not term:
-            return
+            action = handle_empty_term()
+            if action == "return":
+                return
+            elif action == "retry":
+                continue
+            elif action == "all":
+                params = {"limit": 0}
+                label  = "ALL IPs"
+            else:
+                continue
+        else:
+            params = {"address__ic": term, "limit": 0}
+            label  = term
 
-        print(f"\n[*] Searching IP addresses for: '{term}' ...")
+        print(f"\n[*] Searching IP addresses for: '{label}' ...")
 
         ips = api_get(
             url, token,
             "/api/ipam/ip-addresses/",
-            params={"address__ic": term, "limit": 0},
+            params=params,
         )
 
         if not ips:
-            print(f"  [!] No IP addresses found matching: '{term}'")
+            print(f"  [!] No IP addresses found matching: '{label}'")
             input("  Press Enter to search again...")
             continue
 
@@ -608,7 +659,7 @@ def global_search_by_ip(url, token):
         prompt_save_csv(
             rows             = ip_csv_rows,
             fieldnames       = ["IP Address", "Device", "Interface", "Status"],
-            default_filename = f"search_ip_{term}_{timestamp}.csv",
+            default_filename = f"search_ip_{label}_{timestamp}.csv",
         )
 
         # Drill-down into device assigned to selected IP
@@ -691,21 +742,31 @@ def global_search_by_type_manufacturer(url, token):
         print("  Searches manufacturer name — Cisco, Arista, BlueCat, Ixia etc.")
         divider()
 
-        term = input(
-            "  Enter manufacturer name or press Enter to return: "
-        ).strip()
+        term = input("  Enter manufacturer name: ").strip()
 
         if not term:
-            return
-
-        print(f"\n[*] Searching device type and manufacturer for: '{term}' ...")
-
-        # Step 1 — find matching manufacturers by name
-        manufacturers = api_get(
-            url, token,
-            "/api/dcim/manufacturers/",
-            params={"name__ic": term, "limit": 0},
-        )
+            action = handle_empty_term()
+            if action == "return":
+                return
+            elif action == "retry":
+                continue
+            elif action == "all":
+                # Search all — pull all manufacturers
+                print(f"\n[*] Fetching all manufacturers ...")
+                manufacturers = api_get(
+                    url, token,
+                    "/api/dcim/manufacturers/",
+                    params={"limit": 0},
+                )
+            else:
+                continue
+        else:
+            print(f"\n[*] Searching manufacturer for: '{term}' ...")
+            manufacturers = api_get(
+                url, token,
+                "/api/dcim/manufacturers/",
+                params={"name__ic": term, "limit": 0},
+            )
 
         if not manufacturers:
             print(f"  [!] No manufacturers found matching: '{term}'")
@@ -1056,31 +1117,59 @@ def query_search_by_name(url, token):
             raw = input("  Terms: ").strip()
 
             if not raw:
-                print("  [!] No input provided.")
-                continue
-
-            terms = [t.strip() for t in raw.split(",") if t.strip()]
+                action = handle_empty_term()
+                if action == "return":
+                    return
+                elif action == "retry":
+                    continue
+                elif action == "all":
+                    # Search all — use empty string with no filter
+                    terms       = [""]
+                    search_all  = True
+                else:
+                    continue
+            else:
+                terms      = [t.strip() for t in raw.split(",") if t.strip()]
+                search_all = False
 
             if not terms:
                 print("  [!] No valid terms found.")
                 continue
 
-            match_param, match_label = prompt_match_type()
+            # Skip match type prompt if searching all
+            if search_all:
+                print(f"\n[*] Quick Search — fetching all devices ...")
+                devices = api_get(url, token, "/api/dcim/devices/",
+                                  params={"limit": 0})
+                if not devices:
+                    print("  [!] No devices found.")
+                else:
+                    summary_rows = display_device_summary(devices, "ALL")
+                    timestamp    = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    prompt_save_csv(
+                        rows             = summary_rows,
+                        fieldnames       = SUMMARY_FIELDS,
+                        default_filename = f"search_all_{timestamp}.csv",
+                    )
+                    drill_down_loop(url, token, devices, "ALL",
+                                    f"device_all_{timestamp}.csv")
+            else:
+                match_param, match_label = prompt_match_type()
 
-            print(f"\n[*] Quick Search — {len(terms)} term(s) "
-                  f"using '{match_label}' matching.")
+                print(f"\n[*] Quick Search — {len(terms)} term(s) "
+                      f"using '{match_label}' matching.")
 
-            all_csv_rows = search_devices_by_names(
-                url, token, terms, match_param
-            )
-
-            if all_csv_rows:
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                prompt_save_csv(
-                    rows             = all_csv_rows,
-                    fieldnames       = DEVICE_DETAIL_FIELDS,
-                    default_filename = f"search_results_{timestamp}.csv",
+                all_csv_rows = search_devices_by_names(
+                    url, token, terms, match_param
                 )
+
+                if all_csv_rows:
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    prompt_save_csv(
+                        rows             = all_csv_rows,
+                        fieldnames       = DEVICE_DETAIL_FIELDS,
+                        default_filename = f"search_results_{timestamp}.csv",
+                    )
 
             input("\n  Press Enter to return to search menu...")
 
