@@ -835,46 +835,167 @@ def query_platforms(url, token):
 # OPTION 5 — SEARCH BY DEVICE NAME
 # =======================================================
 
-def search_devices_by_names(url, token, hostnames):
+# Nautobot filter parameters for each match type
+MATCH_TYPES = {
+    "1": ("name__isw", "Starts with"),   # case-insensitive starts-with
+    "2": ("name__ic",  "Contains"),      # case-insensitive contains
+    "3": ("name",      "Exact"),         # exact match
+}
+
+
+def prompt_match_type():
     """
-    Shared lookup logic for both Quick Search and File Search.
+    Prompt the user once to select a match type.
+    Returns (nautobot_param, label) tuple.
+    e.g. ("name__isw", "Starts with")
+    """
+    print("\n  Match type:")
+    print("  1. Starts with  — abc-  matches abc-spine-01, abc-leaf-01")
+    print("  2. Contains     — spine matches abc-spine-01, dc-spine-02")
+    print("  3. Exact        — full hostname only")
+    divider("-")
+
+    while True:
+        choice = input("  Select match type (1/2/3): ").strip()
+        if choice in MATCH_TYPES:
+            param, label = MATCH_TYPES[choice]
+            print(f"  [*] Using: {label}")
+            return param, label
+        print("  [!] Invalid — enter 1, 2, or 3.")
+
+
+def search_devices_by_names(url, token, hostnames, match_param):
+    """
+    Shared lookup engine for Quick Search and File Search.
+
+    For exact matches    — shows full device detail immediately.
+    For partial matches  — shows a numbered summary list of all matches
+                           per search term, then offers drill-down into
+                           any device for full detail.
 
     Args:
-        url       : Nautobot base URL
-        token     : API token
-        hostnames : List of hostname strings to look up
+        url         : Nautobot base URL
+        token       : API token
+        hostnames   : List of search terms
+        match_param : Nautobot filter param — name, name__isw, or name__ic
 
-    Looks up each hostname individually, displays full device detail
-    for each match, reports any not found.
     Returns a flat list of CSV-ready rows across all matched devices.
     """
-    all_csv_rows  = []
-    found_count   = 0
-    missing       = []
+    all_csv_rows = []
+    found_count  = 0
+    missing      = []
+    is_exact     = match_param == "name"
 
-    for hostname in hostnames:
-        hostname = hostname.strip()
-        if not hostname:
+    for term in hostnames:
+        term = term.strip()
+        if not term:
             continue
 
-        print(f"\n[*] Searching for: {hostname} ...")
-        matched = api_get(url, token, "/api/dcim/devices/",
-                          params={"name": hostname})
+        print(f"\n[*] Searching: '{term}' ...")
 
-        if matched:
-            found_count += 1
+        matched = api_get(url, token, "/api/dcim/devices/",
+                          params={match_param: term, "limit": 0})
+
+        if not matched:
+            missing.append(term)
+            print(f"  [!] No devices found for: {term}")
+            continue
+
+        found_count += len(matched)
+
+        # -----------------------------------------------
+        # Exact match — show full detail immediately
+        # -----------------------------------------------
+        if is_exact:
             rows = display_device_detail(url, token, matched[0])
             all_csv_rows.extend(rows)
-        else:
-            missing.append(hostname)
-            print(f"  [!] Not found: {hostname}")
 
-    # Summary
+        # -----------------------------------------------
+        # Partial match — summary list first, then drill
+        # -----------------------------------------------
+        else:
+            print(f"  [+] Found {len(matched)} match(es) for '{term}'.\n")
+            divider()
+            print(f"  {'#':<5} {'Device Name':<35} {'Status':<12} "
+                  f"{'Platform':<20} {'Rack':<20} {'RU'}")
+            divider("-")
+
+            summary_rows = []
+            for idx, device in enumerate(matched, start=1):
+                name      = device.get("name", "N/A")
+                status    = device.get("status", {}).get("label", "N/A")
+                platform  = device.get("platform")
+                platform  = platform.get("name", "N/A") if platform else "N/A"
+                rack      = device.get("rack")
+                rack_name = rack.get("name", "N/A") if rack else "Not racked"
+                position  = str(device.get("position", "N/A"))
+                primary_ip = device.get("primary_ip")
+                primary_ip = primary_ip.get("address", "N/A") \
+                             if primary_ip else "Not assigned"
+
+                print(f"  {idx:<5} {name:<35} {status:<12} "
+                      f"{platform:<20} {rack_name:<20} {position}")
+
+                summary_rows.append({
+                    "Device Name": name,
+                    "Status":      status,
+                    "Platform":    platform,
+                    "Primary IP":  primary_ip,
+                    "Rack":        rack_name,
+                    "RU Position": position,
+                })
+
+            divider()
+
+            # CSV export for this term's summary
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            prompt_save_csv(
+                rows             = summary_rows,
+                fieldnames       = [
+                    "Device Name", "Status", "Platform",
+                    "Primary IP", "Rack", "RU Position",
+                ],
+                default_filename = f"search_{term}_{timestamp}.csv",
+            )
+
+            # Drill-down into a specific match
+            while True:
+                print(f"\n  Enter a number to drill into a device,")
+                drill = input(
+                    "  or press Enter to continue to next search term: "
+                ).strip()
+
+                if not drill:
+                    break
+
+                if not drill.isdigit() or \
+                   not (1 <= int(drill) <= len(matched)):
+                    print(f"\n  [!] Invalid — enter a number between "
+                          f"1 and {len(matched)}.")
+                    continue
+
+                selected    = matched[int(drill) - 1]
+                device_name = selected.get("name", "N/A")
+                print()
+                detail_rows = display_device_detail(url, token, selected)
+                all_csv_rows.extend(detail_rows)
+
+                # CSV export for device detail
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                prompt_save_csv(
+                    rows             = detail_rows,
+                    fieldnames       = DEVICE_DETAIL_FIELDS,
+                    default_filename = f"device_{device_name}_{timestamp}.csv",
+                )
+
+                input("\n  Press Enter to return to match list...")
+
+    # Final summary
     divider()
     print(f"  Search complete.")
-    print(f"  Found   : {found_count} device(s)")
+    print(f"  Matched : {found_count} device(s)")
     if missing:
-        print(f"  Missing : {len(missing)} device(s)")
+        print(f"  No results for {len(missing)} term(s):")
         for m in missing:
             print(f"            - {m}")
     divider()
@@ -886,15 +1007,17 @@ def query_search_by_name(url, token):
     """
     Sub-menu for searching devices by name.
     Two input methods:
-        1. Quick Search — paste hostnames comma separated
-        2. File Search  — load hostnames from a text file, one per line
+        1. Quick Search — paste terms comma separated
+        2. File Search  — load terms from a text file, one per line
+    Match type selected once per search session:
+        Starts with / Contains / Exact
     """
     while True:
         print("\n")
         divider()
         print("  Search by Device Name")
         divider()
-        print("  1. Quick Search  — paste hostnames (comma separated)")
+        print("  1. Quick Search  — paste terms (comma separated)")
         print("  2. File Search   — load from text file (one per line)")
         print("  3. Back to main menu")
         divider()
@@ -905,23 +1028,30 @@ def query_search_by_name(url, token):
         # Quick Search
         # ---------------------------------------------------
         if choice == "1":
-            print("\n  Paste hostnames separated by commas.")
-            raw = input("  Hostnames: ").strip()
+            print("\n  Paste search terms separated by commas.")
+            raw = input("  Terms: ").strip()
 
             if not raw:
                 print("  [!] No input provided.")
                 continue
 
-            hostnames = [h.strip() for h in raw.split(",") if h.strip()]
+            terms = [t.strip() for t in raw.split(",") if t.strip()]
 
-            if not hostnames:
-                print("  [!] No valid hostnames found in input.")
+            if not terms:
+                print("  [!] No valid terms found in input.")
                 continue
 
-            print(f"\n[*] Quick Search — {len(hostnames)} hostname(s) to look up.")
-            all_csv_rows = search_devices_by_names(url, token, hostnames)
+            # Prompt for match type once
+            match_param, match_label = prompt_match_type()
 
-            # CSV export
+            print(f"\n[*] Quick Search — {len(terms)} term(s) "
+                  f"using '{match_label}' matching.")
+
+            all_csv_rows = search_devices_by_names(
+                url, token, terms, match_param
+            )
+
+            # Final CSV export covering all terms
             if all_csv_rows:
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                 prompt_save_csv(
@@ -936,8 +1066,8 @@ def query_search_by_name(url, token):
         # File Search
         # ---------------------------------------------------
         elif choice == "2":
-            print("\n  Enter the full path to your hostnames file.")
-            print("  File format: one hostname per line.")
+            print("\n  Enter the full path to your search terms file.")
+            print("  File format: one term per line, # lines are ignored.")
             filepath = input("  File path: ").strip().strip('"')
 
             if not filepath:
@@ -949,28 +1079,34 @@ def query_search_by_name(url, token):
                 print("      Check the path and try again.")
                 continue
 
-            # Read hostnames from file
             try:
                 with open(filepath, "r", encoding="utf-8") as f:
-                    hostnames = [
+                    terms = [
                         line.strip()
                         for line in f.readlines()
-                        if line.strip()          # skip blank lines
-                        and not line.startswith("#")  # skip comment lines
+                        if line.strip()
+                        and not line.startswith("#")
                     ]
             except IOError as e:
                 print(f"  [-] ERROR reading file: {e}")
                 continue
 
-            if not hostnames:
-                print("  [!] File is empty or contains no valid hostnames.")
+            if not terms:
+                print("  [!] File is empty or contains no valid terms.")
                 continue
 
-            print(f"\n[*] File Search — {len(hostnames)} hostname(s) loaded "
-                  f"from: {os.path.basename(filepath)}")
-            all_csv_rows = search_devices_by_names(url, token, hostnames)
+            # Prompt for match type once
+            match_param, match_label = prompt_match_type()
 
-            # CSV export
+            print(f"\n[*] File Search — {len(terms)} term(s) loaded "
+                  f"from: {os.path.basename(filepath)} "
+                  f"using '{match_label}' matching.")
+
+            all_csv_rows = search_devices_by_names(
+                url, token, terms, match_param
+            )
+
+            # Final CSV export covering all terms
             if all_csv_rows:
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                 prompt_save_csv(
