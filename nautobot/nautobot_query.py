@@ -8,7 +8,13 @@ Menu Options:
     1. Devices        - Full detail: interfaces, IPs, console, rack, RU
     2. IP Addresses   - All IPs at site with optional drill-down into device
     3. Racks          - All racks with devices and RU positions
-    4. Exit
+    4. Platforms      - All platforms with drill-down into devices per platform
+    5. Search by Device Name - Quick (comma separated) or File (one per line)
+    6. Exit
+
+CSV Export:
+    Every view and drill-down offers an option to save results to a CSV file.
+    Files are saved to the same directory as this script.
 
 Requirements:
     pip install requests
@@ -17,11 +23,13 @@ Usage:
     python nautobot_query.py
 """
 
-import requests
+import csv
 import configparser
 import os
 import sys
 import urllib3
+import requests
+from datetime import datetime
 
 # -------------------------------------------------------
 # Suppress SSL warnings for self-signed lab certs.
@@ -156,25 +164,97 @@ def section(title):
 
 
 # =======================================================
-# SHARED: DEVICE DETAIL VIEW
-# Used by both Option 1 and Option 2 drill-down
+# CSV HELPERS
 # =======================================================
+
+def prompt_save_csv(rows, fieldnames, default_filename):
+    """
+    Prompt the user to save data to a CSV file.
+
+    Args:
+        rows             : List of dicts — one dict per row
+        fieldnames       : List of column header strings
+        default_filename : Suggested filename shown in the prompt
+
+    The user can:
+        - Type a filename to save (.csv added automatically if missing)
+        - Press Enter to skip saving entirely
+        - Choose to overwrite or append if the file already exists
+    """
+    if not rows:
+        return
+
+    divider("-")
+    print(f"\n  Save results to CSV?")
+    print(f"  Suggested: {default_filename}")
+    filename = input("  Enter filename or press Enter to skip: ").strip()
+
+    if not filename:
+        print("  [*] Skipped — no file saved.")
+        return
+
+    # Ensure .csv extension
+    if not filename.lower().endswith(".csv"):
+        filename += ".csv"
+
+    # Handle existing file
+    write_mode   = "w"
+    write_header = True
+
+    if os.path.exists(filename):
+        print(f"\n  [!] '{filename}' already exists.")
+        action = input("  Overwrite (o) or Append (a)? ").strip().lower()
+        if action == "a":
+            write_mode   = "a"
+            write_header = False
+        elif action == "o":
+            write_mode   = "w"
+            write_header = True
+        else:
+            print("  [*] Invalid choice — skipped, no file saved.")
+            return
+
+    try:
+        with open(filename, write_mode, newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
+            if write_header:
+                writer.writeheader()
+            writer.writerows(rows)
+
+        full_path = os.path.abspath(filename)
+        print(f"\n  [+] Saved {len(rows)} row(s) to: {full_path}")
+
+    except IOError as e:
+        print(f"\n  [-] ERROR saving file: {e}")
+
+
+# =======================================================
+# SHARED: DEVICE DETAIL VIEW
+# Used by Options 1, 2, and 4 drill-downs
+# Returns a list of CSV-ready rows for optional export
+# =======================================================
+
+# CSV column headers for device detail — used across all device exports
+DEVICE_DETAIL_FIELDS = [
+    "Device Name", "Status", "Platform", "Device Type", "Primary IP",
+    "Rack", "RU Position", "Console Ports",
+    "Interface", "Interface Type", "Enabled", "Mgmt Only", "Interface IPs",
+]
+
 
 def display_device_detail(url, token, device):
     """
     Print full detail for a single device:
-    - Name, status, platform, device type
-    - Primary IP
-    - All interfaces + assigned IPs
-    - Console port
-    - Rack + RU position
+      - Name, status, platform, device type
+      - Primary IP
+      - Rack + RU position
+      - Console ports
+      - All interfaces + assigned IPs
+
+    Returns a list of dicts (one per interface) ready for CSV export.
     """
     device_id   = device.get("id")
     device_name = device.get("name", "N/A")
-
-    divider()
-    print(f"  DEVICE: {device_name}")
-    divider()
 
     # Basic info
     status      = device.get("status", {}).get("label", "N/A")
@@ -184,35 +264,45 @@ def display_device_detail(url, token, device):
     primary_ip  = device.get("primary_ip")
     primary_ip  = primary_ip.get("address", "N/A") if primary_ip else "Not assigned"
 
+    # Rack info
+    rack      = device.get("rack")
+    rack_name = rack.get("name", "N/A") if rack else "Not racked"
+    rack_face = device.get("face", {})
+    rack_face = rack_face.get("label", "N/A") if rack_face else "N/A"
+    position  = device.get("position", "N/A")
+
+    divider()
+    print(f"  DEVICE: {device_name}")
+    divider()
     print(f"  Status      : {status}")
     print(f"  Platform    : {platform}")
     print(f"  Device Type : {device_type}")
     print(f"  Primary IP  : {primary_ip}")
 
-    # Rack + RU position
     section("Rack Location")
-    rack         = device.get("rack")
-    rack_name    = rack.get("name", "N/A") if rack else "Not racked"
-    rack_face    = device.get("face", {})
-    rack_face    = rack_face.get("label", "N/A") if rack_face else "N/A"
-    position     = device.get("position", "N/A")
-
-    print(f"  Rack         : {rack_name}")
-    print(f"  RU Position  : {position}")
-    print(f"  Face         : {rack_face}")
+    print(f"  Rack        : {rack_name}")
+    print(f"  RU Position : {position}")
+    print(f"  Face        : {rack_face}")
 
     # Console ports
     section("Console Ports")
-    consoles = api_get(url, token, f"/api/dcim/console-ports/", params={"device_id": device_id})
+    consoles      = api_get(url, token, "/api/dcim/console-ports/",
+                            params={"device_id": device_id})
+    console_names = []
     if consoles:
         for c in consoles:
-            print(f"  {c.get('name', 'N/A')}")
+            cname = c.get("name", "N/A")
+            console_names.append(cname)
+            print(f"  {cname}")
     else:
         print("  None found")
 
     # Interfaces + IPs
     section("Interfaces")
-    interfaces = api_get(url, token, "/api/dcim/interfaces/", params={"device_id": device_id})
+    interfaces = api_get(url, token, "/api/dcim/interfaces/",
+                         params={"device_id": device_id})
+
+    csv_rows = []
 
     if interfaces:
         for iface in interfaces:
@@ -222,17 +312,50 @@ def display_device_detail(url, token, device):
             enabled    = "Enabled" if iface.get("enabled") else "Disabled"
             mgmt       = " [MGMT]" if iface.get("mgmt_only") else ""
 
-            # Get IPs assigned to this interface
-            ips = api_get(url, token, "/api/ipam/ip-addresses/",
-                          params={"interface_id": iface_id})
-            ip_list = ", ".join([ip.get("address", "") for ip in ips]) if ips else "No IP"
+            ips     = api_get(url, token, "/api/ipam/ip-addresses/",
+                              params={"interface_id": iface_id})
+            ip_list = ", ".join([ip.get("address", "") for ip in ips]) \
+                      if ips else "No IP"
 
             print(f"  {iface_name:<30} {iface_type:<20} {enabled}{mgmt}")
-            print(f"  {'':>2}IP: {ip_list}")
+            print(f"    IP: {ip_list}")
+
+            csv_rows.append({
+                "Device Name":    device_name,
+                "Status":         status,
+                "Platform":       platform,
+                "Device Type":    device_type,
+                "Primary IP":     primary_ip,
+                "Rack":           rack_name,
+                "RU Position":    position,
+                "Console Ports":  ", ".join(console_names) if console_names else "None",
+                "Interface":      iface_name,
+                "Interface Type": iface_type,
+                "Enabled":        enabled,
+                "Mgmt Only":      "Yes" if iface.get("mgmt_only") else "No",
+                "Interface IPs":  ip_list,
+            })
     else:
         print("  None found")
+        # One row with device info even if no interfaces
+        csv_rows.append({
+            "Device Name":    device_name,
+            "Status":         status,
+            "Platform":       platform,
+            "Device Type":    device_type,
+            "Primary IP":     primary_ip,
+            "Rack":           rack_name,
+            "RU Position":    position,
+            "Console Ports":  ", ".join(console_names) if console_names else "None",
+            "Interface":      "N/A",
+            "Interface Type": "N/A",
+            "Enabled":        "N/A",
+            "Mgmt Only":      "N/A",
+            "Interface IPs":  "N/A",
+        })
 
     print()
+    return csv_rows
 
 
 # =======================================================
@@ -240,7 +363,7 @@ def display_device_detail(url, token, device):
 # =======================================================
 
 def query_devices(url, token):
-    """Pull all devices at SITE_NAME and display full detail."""
+    """Pull all devices at SITE_NAME and display full detail with CSV export."""
     print(f"\n[*] Fetching all devices at site: {SITE_NAME} ...")
 
     devices = api_get(url, token, "/api/dcim/devices/", params={"site": SITE_NAME})
@@ -248,14 +371,25 @@ def query_devices(url, token):
     if not devices:
         print(f"[!] No devices found for site: {SITE_NAME}")
         print("    Check that SITE_NAME matches exactly what's in Nautobot.")
+        input("  Press Enter to return to menu...")
         return
 
     print(f"[+] Found {len(devices)} device(s).\n")
 
+    all_csv_rows = []
     for device in devices:
-        display_device_detail(url, token, device)
+        rows = display_device_detail(url, token, device)
+        all_csv_rows.extend(rows)
 
-    input("  Press Enter to return to menu...")
+    # CSV export
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    prompt_save_csv(
+        rows             = all_csv_rows,
+        fieldnames       = DEVICE_DETAIL_FIELDS,
+        default_filename = f"devices_{SITE_NAME}_{timestamp}.csv",
+    )
+
+    input("\n  Press Enter to return to menu...")
 
 
 # =======================================================
@@ -265,8 +399,7 @@ def query_devices(url, token):
 def query_ip_addresses(url, token):
     """
     Pull all IPs at SITE_NAME.
-    After display, optionally drill down into a device
-    using the shared display_device_detail() function.
+    CSV export offered after list view and after device drill-down.
     """
     print(f"\n[*] Fetching all IP addresses at site: {SITE_NAME} ...")
 
@@ -274,6 +407,7 @@ def query_ip_addresses(url, token):
 
     if not ips:
         print(f"[!] No IP addresses found for site: {SITE_NAME}")
+        input("  Press Enter to return to menu...")
         return
 
     print(f"[+] Found {len(ips)} IP address(es).\n")
@@ -281,6 +415,7 @@ def query_ip_addresses(url, token):
     print(f"  {'IP Address':<25} {'Device':<30} {'Interface'}")
     divider("-")
 
+    csv_rows = []
     for ip in ips:
         address   = ip.get("address", "N/A")
         interface = ip.get("assigned_object")
@@ -294,23 +429,42 @@ def query_ip_addresses(url, token):
             iface_name  = "N/A"
 
         print(f"  {address:<25} {device_name:<30} {iface_name}")
+        csv_rows.append({
+            "IP Address": address,
+            "Device":     device_name,
+            "Interface":  iface_name,
+        })
 
     divider()
 
-    # Drill-down option
+    # CSV export for IP list
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    prompt_save_csv(
+        rows             = csv_rows,
+        fieldnames       = ["IP Address", "Device", "Interface"],
+        default_filename = f"ip_addresses_{SITE_NAME}_{timestamp}.csv",
+    )
+
+    # Optional device drill-down
     print("\n  Enter a device name to drill down into it,")
     choice = input("  or press Enter to return to menu: ").strip()
 
     if choice:
-        # Look up the device by name and show full detail
         matched = api_get(url, token, "/api/dcim/devices/", params={"name": choice})
         if matched:
             print()
-            display_device_detail(url, token, matched[0])
+            detail_rows = display_device_detail(url, token, matched[0])
+
+            # CSV export for device drill-down
+            prompt_save_csv(
+                rows             = detail_rows,
+                fieldnames       = DEVICE_DETAIL_FIELDS,
+                default_filename = f"device_{choice}_{timestamp}.csv",
+            )
         else:
             print(f"\n[!] No device found with name: {choice}")
 
-    input("  Press Enter to return to menu...")
+    input("\n  Press Enter to return to menu...")
 
 
 # =======================================================
@@ -319,8 +473,8 @@ def query_ip_addresses(url, token):
 
 def query_racks(url, token):
     """
-    Pull all racks at SITE_NAME.
-    For each rack, list every device and its RU position.
+    Pull all racks at SITE_NAME with devices and RU positions.
+    CSV export offered after all racks are displayed.
     """
     print(f"\n[*] Fetching all racks at site: {SITE_NAME} ...")
 
@@ -328,9 +482,12 @@ def query_racks(url, token):
 
     if not racks:
         print(f"[!] No racks found for site: {SITE_NAME}")
+        input("  Press Enter to return to menu...")
         return
 
     print(f"[+] Found {len(racks)} rack(s).\n")
+
+    all_csv_rows = []
 
     for rack in racks:
         rack_id       = rack.get("id")
@@ -347,7 +504,6 @@ def query_racks(url, token):
         print(f"  Height    : {rack_height}U")
         print(f"  Status    : {rack_status}")
 
-        # Get all devices in this rack
         devices = api_get(url, token, "/api/dcim/devices/",
                           params={"rack_id": rack_id})
 
@@ -355,24 +511,356 @@ def query_racks(url, token):
         if devices:
             print(f"  {'RU':<6} {'Device Name':<35} {'Device Type':<30} {'Status'}")
             divider("-")
-            # Sort by RU position so rack reads top to bottom
+
             devices_sorted = sorted(
                 devices,
                 key=lambda d: d.get("position") or 0,
-                reverse=True
+                reverse=True,
             )
             for d in devices_sorted:
-                position    = str(d.get("position", "N/A"))
-                name        = d.get("name", "N/A")
-                dtype       = d.get("device_type", {}).get("display", "N/A")
-                status      = d.get("status", {}).get("label", "N/A")
-                print(f"  {position:<6} {name:<35} {dtype:<30} {status}")
+                position = str(d.get("position", "N/A"))
+                name     = d.get("name", "N/A")
+                dtype    = d.get("device_type", {}).get("display", "N/A")
+                dstatus  = d.get("status", {}).get("label", "N/A")
+                print(f"  {position:<6} {name:<35} {dtype:<30} {dstatus}")
+
+                all_csv_rows.append({
+                    "Rack":        rack_name,
+                    "Location":    rack_location,
+                    "Rack Height": f"{rack_height}U",
+                    "Rack Status": rack_status,
+                    "RU Position": position,
+                    "Device Name": name,
+                    "Device Type": dtype,
+                    "Status":      dstatus,
+                })
         else:
             print("  No devices found in this rack.")
 
         print()
 
-    input("  Press Enter to return to menu...")
+    # CSV export
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    prompt_save_csv(
+        rows             = all_csv_rows,
+        fieldnames       = [
+            "Rack", "Location", "Rack Height", "Rack Status",
+            "RU Position", "Device Name", "Device Type", "Status",
+        ],
+        default_filename = f"racks_{SITE_NAME}_{timestamp}.csv",
+    )
+
+    input("\n  Press Enter to return to menu...")
+
+
+# =======================================================
+# OPTION 4 — PLATFORMS
+# =======================================================
+
+def query_platforms(url, token):
+    """
+    Pull all platforms. Drill down into devices per platform (site filtered).
+    Drill down further into device detail. CSV export at every level.
+    """
+    while True:
+        print(f"\n[*] Fetching all platforms ...")
+
+        platforms = api_get(url, token, "/api/dcim/platforms/")
+
+        if not platforms:
+            print("[!] No platforms found in Nautobot.")
+            input("  Press Enter to return to menu...")
+            return
+
+        print(f"[+] Found {len(platforms)} platform(s).\n")
+        divider()
+        print(f"  {'#':<5} {'Platform Name':<30} {'Manufacturer'}")
+        divider("-")
+
+        platform_csv_rows = []
+        for idx, platform in enumerate(platforms, start=1):
+            name         = platform.get("name", "N/A")
+            manufacturer = platform.get("manufacturer")
+            manufacturer = manufacturer.get("name", "N/A") if manufacturer else "N/A"
+            print(f"  {idx:<5} {name:<30} {manufacturer}")
+            platform_csv_rows.append({
+                "Platform Name": name,
+                "Manufacturer":  manufacturer,
+            })
+
+        divider()
+
+        # CSV export for platform list
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        prompt_save_csv(
+            rows             = platform_csv_rows,
+            fieldnames       = ["Platform Name", "Manufacturer"],
+            default_filename = f"platforms_{timestamp}.csv",
+        )
+
+        # Platform selection
+        print("\n  Enter a number to drill down into a platform,")
+        choice = input("  or press Enter to return to menu: ").strip()
+
+        if not choice:
+            return
+
+        if not choice.isdigit() or not (1 <= int(choice) <= len(platforms)):
+            print(f"\n[!] Invalid selection. Enter a number between 1 and {len(platforms)}.")
+            continue
+
+        selected_platform = platforms[int(choice) - 1]
+        platform_name     = selected_platform.get("name", "N/A")
+        platform_slug     = selected_platform.get("slug") or selected_platform.get("name")
+
+        # Drill into platform — devices filtered by site
+        while True:
+            print(f"\n[*] Fetching devices on platform: {platform_name} "
+                  f"at site: {SITE_NAME} ...")
+
+            devices = api_get(
+                url, token,
+                "/api/dcim/devices/",
+                params={"platform": platform_slug, "site": SITE_NAME},
+            )
+
+            # Fallback without site filter
+            if not devices:
+                print(f"[!] No devices found at site: {SITE_NAME} for "
+                      f"platform: {platform_name}")
+                print(f"[*] Trying without site filter ...")
+                devices = api_get(
+                    url, token,
+                    "/api/dcim/devices/",
+                    params={"platform": platform_slug},
+                )
+
+            if not devices:
+                print(f"[!] No devices found for platform: {platform_name}")
+                input("  Press Enter to go back to platforms...")
+                break
+
+            print(f"[+] Found {len(devices)} device(s).\n")
+            divider()
+            print(f"  DEVICES ON PLATFORM: {platform_name}")
+            print(f"  Site: {SITE_NAME}")
+            divider("-")
+            print(f"  {'#':<5} {'Device Name':<35} {'Status':<15} {'Rack'}")
+            divider("-")
+
+            platform_device_rows = []
+            for idx, device in enumerate(devices, start=1):
+                name   = device.get("name", "N/A")
+                status = device.get("status", {}).get("label", "N/A")
+                rack   = device.get("rack")
+                rack   = rack.get("name", "N/A") if rack else "Not racked"
+                print(f"  {idx:<5} {name:<35} {status:<15} {rack}")
+                platform_device_rows.append({
+                    "Platform":    platform_name,
+                    "Device Name": name,
+                    "Status":      status,
+                    "Rack":        rack,
+                })
+
+            divider()
+
+            # CSV export for platform device list
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            prompt_save_csv(
+                rows             = platform_device_rows,
+                fieldnames       = ["Platform", "Device Name", "Status", "Rack"],
+                default_filename = f"platform_{platform_name}_{timestamp}.csv",
+            )
+
+            # Device drill-down
+            print("\n  Enter a number to drill down into a device,")
+            device_choice = input(
+                "  or press Enter to go back to platforms: "
+            ).strip()
+
+            if not device_choice:
+                break
+
+            if not device_choice.isdigit() or \
+               not (1 <= int(device_choice) <= len(devices)):
+                print(f"\n[!] Invalid selection. Enter a number between "
+                      f"1 and {len(devices)}.")
+                continue
+
+            selected_device = devices[int(device_choice) - 1]
+            device_name     = selected_device.get("name", "N/A")
+            print()
+            detail_rows = display_device_detail(url, token, selected_device)
+
+            # CSV export for device detail
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            prompt_save_csv(
+                rows             = detail_rows,
+                fieldnames       = DEVICE_DETAIL_FIELDS,
+                default_filename = f"device_{device_name}_{timestamp}.csv",
+            )
+
+            input("\n  Press Enter to return to platform device list...")
+
+
+# =======================================================
+# OPTION 5 — SEARCH BY DEVICE NAME
+# =======================================================
+
+def search_devices_by_names(url, token, hostnames):
+    """
+    Shared lookup logic for both Quick Search and File Search.
+
+    Args:
+        url       : Nautobot base URL
+        token     : API token
+        hostnames : List of hostname strings to look up
+
+    Looks up each hostname individually, displays full device detail
+    for each match, reports any not found.
+    Returns a flat list of CSV-ready rows across all matched devices.
+    """
+    all_csv_rows  = []
+    found_count   = 0
+    missing       = []
+
+    for hostname in hostnames:
+        hostname = hostname.strip()
+        if not hostname:
+            continue
+
+        print(f"\n[*] Searching for: {hostname} ...")
+        matched = api_get(url, token, "/api/dcim/devices/",
+                          params={"name": hostname})
+
+        if matched:
+            found_count += 1
+            rows = display_device_detail(url, token, matched[0])
+            all_csv_rows.extend(rows)
+        else:
+            missing.append(hostname)
+            print(f"  [!] Not found: {hostname}")
+
+    # Summary
+    divider()
+    print(f"  Search complete.")
+    print(f"  Found   : {found_count} device(s)")
+    if missing:
+        print(f"  Missing : {len(missing)} device(s)")
+        for m in missing:
+            print(f"            - {m}")
+    divider()
+
+    return all_csv_rows
+
+
+def query_search_by_name(url, token):
+    """
+    Sub-menu for searching devices by name.
+    Two input methods:
+        1. Quick Search — paste hostnames comma separated
+        2. File Search  — load hostnames from a text file, one per line
+    """
+    while True:
+        print("\n")
+        divider()
+        print("  Search by Device Name")
+        divider()
+        print("  1. Quick Search  — paste hostnames (comma separated)")
+        print("  2. File Search   — load from text file (one per line)")
+        print("  3. Back to main menu")
+        divider()
+
+        choice = input("  Select an option: ").strip()
+
+        # ---------------------------------------------------
+        # Quick Search
+        # ---------------------------------------------------
+        if choice == "1":
+            print("\n  Paste hostnames separated by commas.")
+            raw = input("  Hostnames: ").strip()
+
+            if not raw:
+                print("  [!] No input provided.")
+                continue
+
+            hostnames = [h.strip() for h in raw.split(",") if h.strip()]
+
+            if not hostnames:
+                print("  [!] No valid hostnames found in input.")
+                continue
+
+            print(f"\n[*] Quick Search — {len(hostnames)} hostname(s) to look up.")
+            all_csv_rows = search_devices_by_names(url, token, hostnames)
+
+            # CSV export
+            if all_csv_rows:
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                prompt_save_csv(
+                    rows             = all_csv_rows,
+                    fieldnames       = DEVICE_DETAIL_FIELDS,
+                    default_filename = f"search_results_{timestamp}.csv",
+                )
+
+            input("\n  Press Enter to return to search menu...")
+
+        # ---------------------------------------------------
+        # File Search
+        # ---------------------------------------------------
+        elif choice == "2":
+            print("\n  Enter the full path to your hostnames file.")
+            print("  File format: one hostname per line.")
+            filepath = input("  File path: ").strip().strip('"')
+
+            if not filepath:
+                print("  [!] No file path provided.")
+                continue
+
+            if not os.path.exists(filepath):
+                print(f"  [-] File not found: {filepath}")
+                print("      Check the path and try again.")
+                continue
+
+            # Read hostnames from file
+            try:
+                with open(filepath, "r", encoding="utf-8") as f:
+                    hostnames = [
+                        line.strip()
+                        for line in f.readlines()
+                        if line.strip()          # skip blank lines
+                        and not line.startswith("#")  # skip comment lines
+                    ]
+            except IOError as e:
+                print(f"  [-] ERROR reading file: {e}")
+                continue
+
+            if not hostnames:
+                print("  [!] File is empty or contains no valid hostnames.")
+                continue
+
+            print(f"\n[*] File Search — {len(hostnames)} hostname(s) loaded "
+                  f"from: {os.path.basename(filepath)}")
+            all_csv_rows = search_devices_by_names(url, token, hostnames)
+
+            # CSV export
+            if all_csv_rows:
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                prompt_save_csv(
+                    rows             = all_csv_rows,
+                    fieldnames       = DEVICE_DETAIL_FIELDS,
+                    default_filename = f"search_results_{timestamp}.csv",
+                )
+
+            input("\n  Press Enter to return to search menu...")
+
+        # ---------------------------------------------------
+        # Back to main menu
+        # ---------------------------------------------------
+        elif choice == "3":
+            return
+
+        else:
+            print("\n  [!] Invalid selection. Please enter 1, 2, or 3.")
 
 
 # =======================================================
@@ -389,7 +877,9 @@ def main_menu():
         print("  1. Devices")
         print("  2. IP Addresses")
         print("  3. Racks")
-        print("  4. Exit")
+        print("  4. Platforms")
+        print("  5. Search by Device Name")
+        print("  6. Exit")
         divider()
 
         choice = input("  Select an option: ").strip()
@@ -401,10 +891,14 @@ def main_menu():
         elif choice == "3":
             query_racks(url, token)
         elif choice == "4":
+            query_platforms(url, token)
+        elif choice == "5":
+            query_search_by_name(url, token)
+        elif choice == "6":
             print("\n  Goodbye.\n")
             sys.exit(0)
         else:
-            print("\n  [!] Invalid selection. Please enter 1, 2, 3, or 4.")
+            print("\n  [!] Invalid selection. Please enter 1 through 6.")
 
 
 # =======================================================
