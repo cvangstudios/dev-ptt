@@ -19,3 +19,27 @@ r = requests.get(url + '/api/dcim/devices/?limit=1', headers=headers, verify=Fal
 print(r.status_code)
 print(json.dumps(r.json(), indent=2))
 "
+
+
+
+python -c "
+import requests, urllib3, json
+urllib3.disable_warnings()
+token = 'your-token'
+url   = 'https://yournautobot.com:8443'
+headers = {'Authorization': 'Token ' + token, 'Accept': 'application/json'}
+r = requests.get(url + '/api/dcim/devices/?device_type__model__ic=cisco&limit=1', headers=headers, verify=False, timeout=30)
+print('device_type__model__ic:', r.status_code)
+"
+
+
+
+python -c "
+import requests, urllib3, json
+urllib3.disable_warnings()
+token = 'your-token'
+url   = 'https://yournautobot.com:8443'
+headers = {'Authorization': 'Token ' + token, 'Accept': 'application/json'}
+r = requests.get(url + '/api/dcim/devices/?manufacturer__name__ic=cisco&limit=1', headers=headers, verify=False, timeout=30)
+print('manufacturer__name__ic:', r.status_code)
+"
