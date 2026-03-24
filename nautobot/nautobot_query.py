@@ -825,90 +825,211 @@ def prompt_match_type():
 
 def search_devices_by_names(url, token, terms, match_param):
     """
-    Shared lookup engine for Quick Search and File Search.
+    Lookup engine for Quick Search and File Search.
 
-    Exact match   — shows full device detail immediately.
-    Partial match — shows numbered summary list, then offers drill-down.
+    Exact match:
+        Shows full device detail immediately per term, one at a time.
+
+    Partial match (starts-with / contains):
+        1. Runs ALL queries silently first
+        2. Displays ALL results together grouped by term
+        3. Numbers are continuous across all groups
+        4. Single drill-down prompt at the bottom
+        5. Single CSV export covering all results
 
     Returns flat list of CSV-ready rows across all matched devices.
     """
-    all_csv_rows = []
-    found_count  = 0
-    missing      = []
-    is_exact     = match_param == "name"
+    is_exact = match_param == "name"
+    missing  = []
+
+    # -------------------------------------------------------
+    # EXACT MATCH — show full detail per term immediately
+    # -------------------------------------------------------
+    if is_exact:
+        all_csv_rows = []
+        for term in terms:
+            term = term.strip()
+            if not term:
+                continue
+
+            print(f"\n[*] Searching: '{term}' ...")
+            matched = api_get(url, token, "/api/dcim/devices/",
+                              params={match_param: term, "limit": 0})
+
+            if not matched:
+                missing.append(term)
+                print(f"  [!] No devices found for: '{term}'")
+                continue
+
+            rows = display_device_detail(url, token, matched[0])
+            all_csv_rows.extend(rows)
+
+        divider()
+        print(f"  Search complete.")
+        if missing:
+            print(f"  No results for: {', '.join(missing)}")
+        divider()
+        return all_csv_rows
+
+    # -------------------------------------------------------
+    # PARTIAL MATCH — collect all results first, then display
+    # -------------------------------------------------------
+
+    # Step 1 — run all queries silently
+    print(f"\n[*] Searching {len(terms)} term(s) ...")
+
+    # grouped_results: list of (term, [devices])
+    grouped_results = []
+    total_found     = 0
 
     for term in terms:
         term = term.strip()
         if not term:
             continue
 
-        print(f"\n[*] Searching: '{term}' ...")
-
         matched = api_get(url, token, "/api/dcim/devices/",
                           params={match_param: term, "limit": 0})
 
         if not matched:
             missing.append(term)
-            print(f"  [!] No devices found for: '{term}'")
+        else:
+            grouped_results.append((term, matched))
+            total_found += len(matched)
+
+    if not grouped_results:
+        divider()
+        print(f"  No results found for any search term.")
+        if missing:
+            print(f"  No results for: {', '.join(missing)}")
+        divider()
+        return []
+
+    # Step 2 — display all results grouped by term
+    # Build a flat indexed list for drill-down
+    # global_idx maps continuous number → device dict
+    global_idx  = {}
+    counter     = 1
+    all_summary = []
+
+    for term, devices in grouped_results:
+        print(f"\n  {term.upper()} ({len(devices)} device(s))")
+        divider("-")
+        print(f"  {'#':<5} {'Name':<30} {'Status':<10} {'Tenant':<15} "
+              f"{'Role':<15} {'Type':<22} {'Site':<10} {'Rack':<15} "
+              f"{'Primary IP'}")
+        divider("-")
+
+        for device in devices:
+            name   = device.get("name", "N/A")
+            status = device.get("status", {}).get("label", "N/A")
+
+            tenant = device.get("tenant")
+            tenant = tenant.get("name", "N/A") if tenant else "N/A"
+
+            role   = device.get("role") or device.get("device_role")
+            role   = role.get("name", "N/A") if role else "N/A"
+
+            dtype  = device.get("device_type", {}).get("display", "N/A")
+
+            site   = device.get("site")
+            site   = site.get("name", "N/A") if site else "N/A"
+
+            rack   = device.get("rack")
+            rack   = rack.get("name", "N/A") if rack else "N/A"
+
+            pip    = device.get("primary_ip")
+            pip    = pip.get("address", "N/A") if pip else "N/A"
+
+            print(f"  {counter:<5} {name:<30} {status:<10} {tenant:<15} "
+                  f"{role:<15} {dtype:<22} {site:<10} {rack:<15} {pip}")
+
+            global_idx[counter] = device
+            all_summary.append({
+                "Search Term": term,
+                "Name":        name,
+                "Status":      status,
+                "Tenant":      tenant,
+                "Role":        role,
+                "Type":        dtype,
+                "Site":        site,
+                "Rack":        rack,
+                "Primary IP":  pip,
+            })
+            counter += 1
+
+    # Summary footer
+    divider()
+    print(f"  Total: {total_found} device(s) across "
+          f"{len(grouped_results)} term(s)")
+    if missing:
+        print(f"  No results for: {', '.join(missing)}")
+    divider()
+
+    # Step 3 — single CSV export covering all results
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    prompt_save_csv(
+        rows             = all_summary,
+        fieldnames       = ["Search Term"] + SUMMARY_FIELDS,
+        default_filename = f"search_results_{timestamp}.csv",
+    )
+
+    # Step 4 — single drill-down prompt covering all results
+    all_csv_rows = []
+    while True:
+        print(f"\n  Enter a number (1-{counter-1}) to drill into a device,")
+        drill = input("  or press Enter to return to menu: ").strip()
+
+        if not drill:
+            break
+
+        if not drill.isdigit() or not (1 <= int(drill) <= counter - 1):
+            print(f"\n  [!] Invalid — enter a number between "
+                  f"1 and {counter - 1}.")
             continue
 
-        found_count += len(matched)
+        selected    = global_idx[int(drill)]
+        device_name = selected.get("name", "N/A")
+        print()
+        detail_rows = display_device_detail(url, token, selected)
+        all_csv_rows.extend(detail_rows)
 
-        # Exact — full detail immediately
-        if is_exact:
-            rows = display_device_detail(url, token, matched[0])
-            all_csv_rows.extend(rows)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        prompt_save_csv(
+            rows             = detail_rows,
+            fieldnames       = DEVICE_DETAIL_FIELDS,
+            default_filename = f"device_{device_name}_{timestamp}.csv",
+        )
 
-        # Partial — summary list with drill-down
-        else:
-            summary_rows = display_device_summary(matched, term)
+        input("\n  Press Enter to return to results...")
 
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            prompt_save_csv(
-                rows             = summary_rows,
-                fieldnames       = SUMMARY_FIELDS,
-                default_filename = f"search_{term}_{timestamp}.csv",
-            )
-
-            while True:
-                print(f"\n  Enter a number to drill into a device,")
-                drill = input(
-                    "  or press Enter to continue to next term: "
-                ).strip()
-
-                if not drill:
-                    break
-
-                if not drill.isdigit() or \
-                   not (1 <= int(drill) <= len(matched)):
-                    print(f"\n  [!] Invalid — enter a number between "
-                          f"1 and {len(matched)}.")
-                    continue
-
-                selected    = matched[int(drill) - 1]
-                device_name = selected.get("name", "N/A")
-                print()
-                detail_rows = display_device_detail(url, token, selected)
-                all_csv_rows.extend(detail_rows)
-
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                prompt_save_csv(
-                    rows             = detail_rows,
-                    fieldnames       = DEVICE_DETAIL_FIELDS,
-                    default_filename = f"device_{device_name}_{timestamp}.csv",
-                )
-
-                input("\n  Press Enter to return to match list...")
-                display_device_summary(matched, term)
-
-    divider()
-    print(f"  Search complete.")
-    print(f"  Matched : {found_count} device(s)")
-    if missing:
-        print(f"  No results for {len(missing)} term(s):")
-        for m in missing:
-            print(f"            - {m}")
-    divider()
+        # Redisplay grouped results after returning from detail
+        counter_r = 1
+        for term, devices in grouped_results:
+            print(f"\n  {term.upper()} ({len(devices)} device(s))")
+            divider("-")
+            print(f"  {'#':<5} {'Name':<30} {'Status':<10} {'Tenant':<15} "
+                  f"{'Role':<15} {'Type':<22} {'Site':<10} {'Rack':<15} "
+                  f"{'Primary IP'}")
+            divider("-")
+            for device in devices:
+                name   = device.get("name", "N/A")
+                status = device.get("status", {}).get("label", "N/A")
+                tenant = device.get("tenant")
+                tenant = tenant.get("name", "N/A") if tenant else "N/A"
+                role   = device.get("role") or device.get("device_role")
+                role   = role.get("name", "N/A") if role else "N/A"
+                dtype  = device.get("device_type", {}).get("display", "N/A")
+                site   = device.get("site")
+                site   = site.get("name", "N/A") if site else "N/A"
+                rack   = device.get("rack")
+                rack   = rack.get("name", "N/A") if rack else "N/A"
+                pip    = device.get("primary_ip")
+                pip    = pip.get("address", "N/A") if pip else "N/A"
+                print(f"  {counter_r:<5} {name:<30} {status:<10} "
+                      f"{tenant:<15} {role:<15} {dtype:<22} "
+                      f"{site:<10} {rack:<15} {pip}")
+                counter_r += 1
+        divider()
 
     return all_csv_rows
 
