@@ -106,3 +106,23 @@ r2 = requests.get(url + '/api/dcim/devices/?manufacturer=' + slug + '&limit=1',
 print('Devices by manufacturer slug:', r2.status_code)
 print('Count:', r2.json().get('count'))
 "
+
+
+
+python -c "
+import requests, urllib3
+urllib3.disable_warnings()
+token = 'your-token'
+url   = 'https://yournautobot.com:8443'
+headers = {'Authorization': 'Token ' + token, 'Accept': 'application/json'}
+
+tests = [
+    'device_role__name__ic=spine',
+    'device_role__slug__ic=spine',
+    'device_role=spine',
+]
+for t in tests:
+    r = requests.get(url + '/api/dcim/devices/?' + t + '&limit=1',
+        headers=headers, verify=False, timeout=30)
+    print(f'{t}: {r.status_code}')
+"
