@@ -9,13 +9,13 @@ print(json.dumps(r.json()['results'][0], indent=2))
 
 
 
-
 python -c "
 import requests, urllib3, json
 urllib3.disable_warnings()
-r = requests.get('https://yournautobot.com:8443/api/dcim/devices/?limit=1&name=your-known-device',
-    headers={'Authorization': 'Token yourtoken', 'Accept': 'application/json'},
-    verify=False, timeout=15)
+token = 'paste-your-actual-40-char-token-here'
+url   = 'https://yournautobot.com:8443'
+headers = {'Authorization': 'Token ' + token, 'Accept': 'application/json'}
+r = requests.get(url + '/api/dcim/devices/?limit=1', headers=headers, verify=False, timeout=15)
 print(r.status_code)
 print(json.dumps(r.json(), indent=2))
 "
