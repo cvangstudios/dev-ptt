@@ -700,34 +700,50 @@ def global_search_by_type_manufacturer(url, token):
 
         print(f"\n[*] Searching device type and manufacturer for: '{term}' ...")
 
-        # Single query — manufacturer name covers Cisco, Arista, BlueCat, Ixia etc.
-        # manufacturer__name__ic confirmed working on this Nautobot instance
-        by_type = api_get(
+        # Step 1 — find matching manufacturers by name
+        manufacturers = api_get(
             url, token,
-            "/api/dcim/devices/",
-            params={"manufacturer__name__ic": term, "limit": 0},
+            "/api/dcim/manufacturers/",
+            params={"name__ic": term, "limit": 0},
         )
+
+        if not manufacturers:
+            print(f"  [!] No manufacturers found matching: '{term}'")
+            input("  Press Enter to search again...")
+            continue
+
+        print(f"  [+] Found {len(manufacturers)} manufacturer(s):")
+        for m in manufacturers:
+            print(f"      - {m.get('name', 'N/A')} (slug: {m.get('slug', 'N/A')})")
+
+        # Step 2 — get devices for each matched manufacturer using slug
+        # Deduplicate by device ID in case multiple manufacturers match
+        seen    = set()
+        devices = []
+
+        for mfr in manufacturers:
+            slug        = mfr.get("slug", "")
+            mfr_devices = api_get(
+                url, token,
+                "/api/dcim/devices/",
+                params={"manufacturer": slug, "limit": 0},
+            )
+            for device in mfr_devices:
+                did = device.get("id")
+                if did not in seen:
+                    seen.add(did)
+                    devices.append(device)
 
         # No second query needed — manufacturer name covers all use cases
         by_mfr = []
-
-        # Deduplicate by device ID
-        seen    = set()
-        devices = []
-        for device in (by_type + by_mfr):
-            did = device.get("id")
-            if did not in seen:
-                seen.add(did)
-                devices.append(device)
 
         if not devices:
             print(f"  [!] No devices found matching type/manufacturer: '{term}'")
             input("  Press Enter to search again...")
             continue
 
-        print(f"  [+] {len(by_type)} match(es) by device type, "
-              f"{len(by_mfr)} by manufacturer, "
-              f"{len(devices)} unique after dedup.")
+        print(f"  [+] {len(devices)} unique device(s) found across "
+              f"{len(manufacturers)} manufacturer(s).")
 
         summary_rows = display_device_summary(devices, term)
 
