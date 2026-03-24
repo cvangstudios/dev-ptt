@@ -687,13 +687,12 @@ def global_search_by_type_manufacturer(url, token):
     while True:
         print("\n")
         divider()
-        print("  Global Search — Device Type / Manufacturer")
-        print("  Searches model name and manufacturer simultaneously.")
-        print("  Examples: 'bluecat', 'cisco', 'arista', 'N9K', 'BC-400'")
+        print("  Global Search — Manufacturer")
+        print("  Searches manufacturer name — Cisco, Arista, BlueCat, Ixia etc.")
         divider()
 
         term = input(
-            "  Enter search term or press Enter to return: "
+            "  Enter manufacturer name or press Enter to return: "
         ).strip()
 
         if not term:
@@ -701,19 +700,16 @@ def global_search_by_type_manufacturer(url, token):
 
         print(f"\n[*] Searching device type and manufacturer for: '{term}' ...")
 
-        # Query 1 — device type model
+        # Single query — manufacturer name covers Cisco, Arista, BlueCat, Ixia etc.
+        # manufacturer__name__ic confirmed working on this Nautobot instance
         by_type = api_get(
-            url, token,
-            "/api/dcim/devices/",
-            params={"device_type__model__ic": term, "limit": 0},
-        )
-
-        # Query 2 — manufacturer name
-        by_mfr = api_get(
             url, token,
             "/api/dcim/devices/",
             params={"manufacturer__name__ic": term, "limit": 0},
         )
+
+        # No second query needed — manufacturer name covers all use cases
+        by_mfr = []
 
         # Deduplicate by device ID
         seen    = set()
@@ -762,7 +758,7 @@ def query_global_search(url, token):
         divider()
         print("  1. Search by Device Name")
         print("  2. Search by IP Address")
-        print("  3. Search by Device Type / Manufacturer")
+        print("  3. Search by Manufacturer")
         print("  4. Back to main menu")
         divider()
 
