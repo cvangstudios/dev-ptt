@@ -56,3 +56,29 @@ r = requests.get(url + '/api/dcim/devices/?limit=1', headers=headers, verify=Fal
 data = r.json()
 print(json.dumps(data['results'][0]['device_type'], indent=2))
 "
+
+
+python -c "
+import requests, urllib3, json
+urllib3.disable_warnings()
+token = 'your-token'
+url   = 'https://yournautobot.com:8443'
+headers = {'Authorization': 'Token ' + token, 'Accept': 'application/json'}
+r = requests.options(url + '/api/dcim/devices/', headers=headers, verify=False, timeout=30)
+print(json.dumps(r.json(), indent=2))
+" > nautobot_filters.txt
+
+
+python -c "
+import requests, urllib3, json
+urllib3.disable_warnings()
+token = 'your-token'
+url   = 'https://yournautobot.com:8443'
+headers = {'Authorization': 'Token ' + token, 'Accept': 'application/json'}
+r = requests.options(url + '/api/dcim/devices/', headers=headers, verify=False, timeout=30)
+data = r.json()
+filters = data.get('schema', data.get('filters', data))
+for key in filters:
+    if 'manuf' in key.lower() or 'type' in key.lower():
+        print(key)
+"
