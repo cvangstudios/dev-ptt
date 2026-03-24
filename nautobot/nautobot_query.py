@@ -86,6 +86,10 @@ def api_get(url, token, endpoint, params=None):
     """
     GET request with automatic pagination.
     Returns a flat list of all results across all pages.
+
+    Performance tip: pass params={"limit": 0} to request all results
+    in a single API call — Nautobot returns everything at once with no
+    pagination overhead. Use for summary list views.
     """
     headers     = build_headers(token)
     all_results = []
@@ -98,7 +102,7 @@ def api_get(url, token, endpoint, params=None):
                 headers=headers,
                 params=params,
                 verify=False,
-                timeout=15,
+                timeout=30,        # increased from 15 for large result sets
             )
         except requests.exceptions.ConnectionError:
             print(f"\n[-] ERROR: Cannot reach {url}. Check network/URL.")
@@ -124,6 +128,7 @@ def api_get(url, token, endpoint, params=None):
             next_url = data.get("next")   # None when last page reached
             params   = None               # Params already baked into next_url
         else:
+            # Single object endpoint — wrap in list for consistency
             all_results.append(data)
             break
 
@@ -376,7 +381,7 @@ def query_devices(url, token):
         print(f"\n[*] Fetching all devices at site: {SITE_NAME} ...")
 
         devices = api_get(url, token, "/api/dcim/devices/",
-                          params={"site": SITE_NAME})
+                          params={"site": SITE_NAME, "limit": 0})
 
         if not devices:
             print(f"[!] No devices found for site: {SITE_NAME}")
@@ -468,7 +473,8 @@ def query_ip_addresses(url, token):
     """
     print(f"\n[*] Fetching all IP addresses at site: {SITE_NAME} ...")
 
-    ips = api_get(url, token, "/api/ipam/ip-addresses/", params={"site": SITE_NAME})
+    ips = api_get(url, token, "/api/ipam/ip-addresses/",
+                  params={"site": SITE_NAME, "limit": 0})
 
     if not ips:
         print(f"[!] No IP addresses found for site: {SITE_NAME}")
@@ -551,7 +557,7 @@ def query_racks(url, token):
         print(f"\n[*] Fetching all racks at site: {SITE_NAME} ...")
 
         racks = api_get(url, token, "/api/dcim/racks/",
-                        params={"site": SITE_NAME})
+                        params={"site": SITE_NAME, "limit": 0})
 
         if not racks:
             print(f"[!] No racks found for site: {SITE_NAME}")
@@ -686,7 +692,8 @@ def query_platforms(url, token):
     while True:
         print(f"\n[*] Fetching all platforms ...")
 
-        platforms = api_get(url, token, "/api/dcim/platforms/")
+        platforms = api_get(url, token, "/api/dcim/platforms/",
+                            params={"limit": 0})
 
         if not platforms:
             print("[!] No platforms found in Nautobot.")
