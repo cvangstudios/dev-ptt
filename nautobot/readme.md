@@ -430,6 +430,28 @@ All script changes are recorded here. Most recent first.
 
 ---
 
+### v0.6 — Two-stage summary + drill-down for Devices and Racks
+**Files changed:** `nautobot_query.py`, `README.md`
+
+- **Option 1 — Devices** redesigned from full-detail-all to two-stage:
+  - Stage 1: Single API call returns all devices as a fast numbered summary list
+    (Name, Status, Platform, Primary IP, Rack, RU)
+  - Stage 2: Select a number to drill into full detail for that device only
+    (interfaces, IPs, console ports — API calls made only for selected device)
+  - CSV export available at both summary and detail levels
+  - After detail view returns to summary list, not main menu
+- **Option 3 — Racks** redesigned from show-all to two-stage:
+  - Stage 1: Single API call returns all racks as a fast numbered summary list
+    (Rack Name, Location, Height, Status)
+  - Stage 2: Select a number to drill into devices in that rack only
+  - CSV export available at both summary and detail levels
+  - After rack detail returns to rack list, not main menu
+- Performance improvement: eliminates hundreds of redundant API calls on large
+  environments by deferring interface/IP/console lookups to on-demand drill-down
+- `SITE_NAME` comment updated to note slug (lowercase) requirement
+
+---
+
 ### v0.5 — Search by Device Name added
 **Files changed:** `nautobot_query.py`, `README.md`
 
