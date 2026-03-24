@@ -82,3 +82,27 @@ for key in filters:
     if 'manuf' in key.lower() or 'type' in key.lower():
         print(key)
 "
+
+
+
+python -c "
+import requests, urllib3
+urllib3.disable_warnings()
+token = 'your-token'
+url   = 'https://yournautobot.com:8443'
+headers = {'Authorization': 'Token ' + token, 'Accept': 'application/json'}
+
+# First get a manufacturer slug from step 1
+r = requests.get(url + '/api/dcim/manufacturers/?name__ic=cisco&limit=1',
+    headers=headers, verify=False, timeout=30)
+mfr = r.json()['results'][0]
+print('Manufacturer name:', mfr.get('name'))
+print('Manufacturer slug:', mfr.get('slug'))
+
+# Now use the slug to filter devices
+slug = mfr.get('slug')
+r2 = requests.get(url + '/api/dcim/devices/?manufacturer=' + slug + '&limit=1',
+    headers=headers, verify=False, timeout=30)
+print('Devices by manufacturer slug:', r2.status_code)
+print('Count:', r2.json().get('count'))
+"
