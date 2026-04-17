@@ -1,0 +1,2938 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>SPL Forge — Splunk Query Builder & Tutorial</title>
+<style>
+  /* ================= Design tokens ================= */
+  :root {
+    --bg:          #0b0d10;
+    --bg-panel:   #11151a;
+    --bg-panel-2: #161b22;
+    --bg-input:   #0d1117;
+    --border:     #22272e;
+    --border-hi:  #30363d;
+    --fg:         #d8dee4;
+    --fg-dim:     #8b949e;
+    --fg-faint:   #6e7681;
+    --accent:     #7fdbca;        /* cool mint */
+    --accent-dim: #3fa08f;
+    --amber:      #f0b400;
+    --magenta:    #ff4f9a;
+    --blue:       #6bb6ff;
+    --green:      #3fb950;
+    --red:        #f85149;
+    --violet:     #a371f7;
+    --mono: "JetBrains Mono", "Fira Code", "SF Mono", "Menlo", Consolas, monospace;
+    --display: "Space Mono", "IBM Plex Mono", ui-monospace, monospace;
+    --body: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--body);
+    font-size: 14px;
+    line-height: 1.55;
+    min-height: 100vh;
+    background-image:
+      radial-gradient(1200px 600px at 80% -10%, rgba(127,219,202,0.06), transparent 60%),
+      radial-gradient(900px 500px at -10% 110%, rgba(163,113,247,0.05), transparent 60%);
+  }
+
+  /* subtle scan-grid behind everything */
+  body::before {
+    content: "";
+    position: fixed; inset: 0;
+    background-image:
+      linear-gradient(rgba(255,255,255,0.015) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,255,255,0.015) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  header.topbar {
+    position: sticky; top: 0; z-index: 10;
+    background: rgba(11,13,16,0.85);
+    backdrop-filter: blur(10px);
+    border-bottom: 1px solid var(--border);
+    padding: 14px 28px;
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 20px;
+  }
+  .brand {
+    display: flex; align-items: center; gap: 12px;
+    font-family: var(--display); font-weight: 700;
+    letter-spacing: 0.02em;
+  }
+  .brand .logo {
+    width: 28px; height: 28px; border-radius: 6px;
+    background:
+      linear-gradient(135deg, var(--accent), var(--violet));
+    display: inline-flex; align-items: center; justify-content: center;
+    color: #0b0d10; font-weight: 800; font-family: var(--mono);
+  }
+  .brand .name { font-size: 17px; }
+  .brand .tag { color: var(--fg-faint); font-weight: 400; font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; }
+
+  nav.tabs { display: flex; gap: 4px; }
+  nav.tabs button {
+    background: transparent;
+    border: 1px solid transparent;
+    color: var(--fg-dim);
+    padding: 8px 14px;
+    font-family: var(--mono); font-size: 12px;
+    letter-spacing: 0.05em; text-transform: uppercase;
+    cursor: pointer; border-radius: 6px;
+    transition: all 0.15s ease;
+  }
+  nav.tabs button:hover { color: var(--fg); background: var(--bg-panel); }
+  nav.tabs button.active {
+    color: var(--accent);
+    background: var(--bg-panel);
+    border-color: var(--border-hi);
+  }
+
+  main { position: relative; z-index: 1; max-width: 1400px; margin: 0 auto; padding: 28px; }
+
+  .pane { display: none; }
+  .pane.active { display: block; animation: fade 0.2s ease; }
+  @keyframes fade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0);} }
+
+  /* ================= Builder layout ================= */
+  .builder {
+    display: grid;
+    grid-template-columns: 1fr 520px;
+    gap: 24px;
+  }
+  @media (max-width: 1100px) {
+    .builder { grid-template-columns: 1fr; }
+  }
+
+  .panel {
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+  }
+  .panel-head {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between;
+    background: linear-gradient(180deg, rgba(255,255,255,0.02), transparent);
+  }
+  .panel-head h2 {
+    margin: 0; font-family: var(--display); font-size: 13px;
+    letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent);
+    font-weight: 700;
+  }
+  .panel-head .hint { font-size: 11px; color: var(--fg-faint); font-family: var(--mono); }
+
+  .section {
+    padding: 18px 16px;
+    border-bottom: 1px solid var(--border);
+  }
+  .section:last-child { border-bottom: none; }
+  .section h3 {
+    margin: 0 0 12px 0;
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--fg-dim);
+    display: flex; align-items: center; gap: 8px;
+  }
+  .section h3::before {
+    content: ""; display: inline-block;
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--accent-dim);
+  }
+
+  .row { display: grid; gap: 10px; }
+  .row-2 { grid-template-columns: 1fr 1fr; }
+  .row-3 { grid-template-columns: 1fr 1fr 1fr; }
+
+  label {
+    display: block;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--fg-dim);
+    margin-bottom: 4px;
+    letter-spacing: 0.05em;
+  }
+
+  input[type="text"], input[type="number"], select, textarea {
+    width: 100%;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    color: var(--fg);
+    padding: 8px 10px;
+    font-family: var(--mono);
+    font-size: 13px;
+    border-radius: 6px;
+    outline: none;
+    transition: border-color 0.15s, box-shadow 0.15s;
+  }
+  input:focus, select:focus, textarea:focus {
+    border-color: var(--accent-dim);
+    box-shadow: 0 0 0 3px rgba(127,219,202,0.1);
+  }
+  textarea { resize: vertical; min-height: 60px; }
+  select {
+    appearance: none;
+    -webkit-appearance: none;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path fill='%238b949e' d='M0 0l5 6 5-6z'/></svg>");
+    background-repeat: no-repeat;
+    background-position: right 12px center;
+    padding-right: 30px;
+  }
+
+  .filter-row, .stats-row, .eval-row, .rex-row {
+    display: grid;
+    gap: 8px;
+    align-items: end;
+    margin-bottom: 8px;
+  }
+  .filter-row { grid-template-columns: 1fr 110px 1fr 36px; }
+  .stats-row { grid-template-columns: 130px 1fr 1fr 36px; }
+  .eval-row { grid-template-columns: 150px 1fr 36px; }
+  .rex-row { grid-template-columns: 130px 1fr 36px; }
+
+  button.btn {
+    background: var(--bg-panel-2);
+    border: 1px solid var(--border);
+    color: var(--fg);
+    padding: 7px 12px;
+    font-family: var(--mono);
+    font-size: 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.15s;
+    letter-spacing: 0.03em;
+  }
+  button.btn:hover { border-color: var(--border-hi); background: #1c2128; }
+  button.btn.primary {
+    background: linear-gradient(135deg, var(--accent), var(--accent-dim));
+    color: #0b0d10; border-color: transparent; font-weight: 600;
+  }
+  button.btn.primary:hover { filter: brightness(1.1); }
+  button.btn.danger { color: var(--red); }
+  button.btn.small { padding: 4px 10px; font-size: 11px; }
+  button.icon-btn {
+    background: transparent; border: 1px solid var(--border);
+    color: var(--fg-dim); width: 36px; height: 36px;
+    border-radius: 6px; cursor: pointer; font-size: 16px;
+    display: inline-flex; align-items: center; justify-content: center;
+    transition: all 0.15s;
+  }
+  button.icon-btn:hover { border-color: var(--red); color: var(--red); }
+
+  .add-btn {
+    width: 100%;
+    background: transparent;
+    border: 1px dashed var(--border-hi);
+    color: var(--fg-dim);
+    padding: 8px;
+    border-radius: 6px;
+    font-family: var(--mono);
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .add-btn:hover { border-color: var(--accent-dim); color: var(--accent); }
+
+  /* ================= Output panel ================= */
+  .output-panel { position: sticky; top: 80px; align-self: start; }
+  .output-box {
+    background: #07090c;
+    border: 1px solid var(--border-hi);
+    border-radius: 8px;
+    padding: 16px;
+    font-family: var(--mono);
+    font-size: 13px;
+    color: var(--accent);
+    white-space: pre-wrap;
+    word-break: break-word;
+    min-height: 120px;
+    line-height: 1.6;
+    position: relative;
+  }
+  .output-box .prompt { color: var(--magenta); user-select: none; }
+  .output-box .placeholder { color: var(--fg-faint); font-style: italic; }
+  .actions { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+
+  .output-meta {
+    margin-top: 14px;
+    padding: 12px;
+    background: var(--bg-input);
+    border-radius: 6px;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--fg-dim);
+    line-height: 1.7;
+  }
+  .output-meta strong { color: var(--amber); font-weight: 500; }
+
+  .copied-toast {
+    position: fixed; bottom: 30px; left: 50%;
+    transform: translateX(-50%) translateY(20px);
+    background: var(--accent);
+    color: #0b0d10;
+    padding: 10px 20px;
+    border-radius: 6px;
+    font-family: var(--mono); font-size: 12px; font-weight: 600;
+    opacity: 0;
+    transition: all 0.25s ease;
+    pointer-events: none;
+    z-index: 100;
+  }
+  .copied-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+  /* ================= Tutorial ================= */
+  .tutorial {
+    display: grid;
+    grid-template-columns: 240px 1fr;
+    gap: 24px;
+  }
+  @media (max-width: 900px) { .tutorial { grid-template-columns: 1fr; } }
+
+  .toc {
+    position: sticky; top: 80px; align-self: start;
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px;
+    max-height: calc(100vh - 110px);
+    overflow-y: auto;
+  }
+  .toc h3 {
+    margin: 0 0 10px 0;
+    font-family: var(--mono); font-size: 11px;
+    letter-spacing: 0.12em; text-transform: uppercase; color: var(--fg-dim);
+  }
+  .toc ol { margin: 0; padding: 0; list-style: none; counter-reset: lesson; }
+  .toc li { counter-increment: lesson; }
+  .toc a {
+    display: block;
+    padding: 7px 10px;
+    color: var(--fg-dim);
+    text-decoration: none;
+    font-size: 12.5px;
+    border-radius: 4px;
+    border-left: 2px solid transparent;
+    transition: all 0.12s;
+  }
+  .toc a::before {
+    content: counter(lesson, decimal-leading-zero) ".";
+    color: var(--fg-faint);
+    font-family: var(--mono);
+    margin-right: 8px;
+    font-size: 11px;
+  }
+  .toc a:hover { color: var(--fg); background: var(--bg-panel-2); }
+  .toc a.active { color: var(--accent); border-left-color: var(--accent); background: var(--bg-panel-2); }
+
+  article.lessons {
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 32px 36px;
+  }
+  article.lessons section { padding: 28px 0; border-bottom: 1px solid var(--border); scroll-margin-top: 80px; }
+  article.lessons section:first-child { padding-top: 0; }
+  article.lessons section:last-child { border-bottom: none; }
+
+  article.lessons h2 {
+    font-family: var(--display);
+    font-size: 22px;
+    margin: 0 0 4px 0;
+    color: var(--fg);
+    letter-spacing: -0.01em;
+  }
+  article.lessons .lesson-num {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--accent);
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    margin-bottom: 2px;
+  }
+  article.lessons h3 {
+    font-family: var(--display);
+    font-size: 15px;
+    margin: 24px 0 8px 0;
+    color: var(--amber);
+  }
+  article.lessons p { color: var(--fg); margin: 0 0 12px 0; }
+  article.lessons ul, article.lessons ol { color: var(--fg); padding-left: 20px; }
+  article.lessons li { margin-bottom: 6px; }
+  article.lessons code {
+    font-family: var(--mono);
+    font-size: 12.5px;
+    background: var(--bg-input);
+    padding: 2px 6px;
+    border-radius: 3px;
+    color: var(--accent);
+    border: 1px solid var(--border);
+  }
+
+  .spl-block {
+    background: #07090c;
+    border: 1px solid var(--border-hi);
+    border-left: 3px solid var(--accent);
+    border-radius: 6px;
+    padding: 14px 16px;
+    margin: 12px 0;
+    font-family: var(--mono);
+    font-size: 13px;
+    color: var(--fg);
+    line-height: 1.6;
+    white-space: pre-wrap;
+    word-break: break-word;
+    position: relative;
+  }
+  .spl-block .kw    { color: var(--magenta); }
+  .spl-block .fn    { color: var(--blue); }
+  .spl-block .str   { color: var(--amber); }
+  .spl-block .num   { color: var(--green); }
+  .spl-block .op    { color: var(--violet); }
+  .spl-block .pipe  { color: var(--accent); font-weight: bold; }
+  .spl-block .comment { color: var(--fg-faint); font-style: italic; }
+  .spl-block .copy {
+    position: absolute; top: 8px; right: 8px;
+    font-family: var(--mono); font-size: 10px;
+    background: var(--bg-panel-2); border: 1px solid var(--border);
+    color: var(--fg-dim); padding: 3px 8px; border-radius: 4px;
+    cursor: pointer; opacity: 0; transition: opacity 0.15s;
+  }
+  .spl-block:hover .copy { opacity: 1; }
+  .spl-block .copy:hover { color: var(--accent); border-color: var(--accent-dim); }
+
+  .callout {
+    border-left: 3px solid var(--amber);
+    background: rgba(240,180,0,0.06);
+    padding: 12px 16px;
+    border-radius: 4px;
+    margin: 14px 0;
+    font-size: 13px;
+  }
+  .callout.info { border-color: var(--blue); background: rgba(107,182,255,0.06); }
+  .callout.warn { border-color: var(--red); background: rgba(248,81,73,0.06); }
+  .callout strong { color: var(--amber); }
+  .callout.info strong { color: var(--blue); }
+  .callout.warn strong { color: var(--red); }
+
+  table.ref {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 14px 0;
+    font-size: 13px;
+  }
+  table.ref th, table.ref td {
+    padding: 8px 10px;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+  }
+  table.ref th {
+    font-family: var(--mono); font-size: 11px;
+    color: var(--fg-dim); letter-spacing: 0.08em;
+    text-transform: uppercase;
+    background: var(--bg-panel-2);
+  }
+  table.ref td code {
+    font-family: var(--mono); font-size: 12px;
+    color: var(--accent); background: none; border: none; padding: 0;
+  }
+
+  /* ================= Cheat sheet grid ================= */
+  .cheat-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: 16px;
+  }
+  .cheat-card {
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 18px;
+  }
+  .cheat-card h3 {
+    margin: 0 0 12px 0;
+    font-family: var(--display); font-size: 14px;
+    color: var(--accent);
+    letter-spacing: 0.02em;
+  }
+  .cheat-card dl { margin: 0; }
+  .cheat-card dt {
+    font-family: var(--mono); font-size: 12px;
+    color: var(--amber); margin-top: 8px;
+  }
+  .cheat-card dd {
+    margin: 2px 0 0 0; padding-left: 12px;
+    font-size: 12.5px; color: var(--fg-dim);
+    border-left: 2px solid var(--border);
+    line-height: 1.5;
+  }
+
+  /* checkbox */
+  .checkbox {
+    display: inline-flex; align-items: center; gap: 8px;
+    cursor: pointer; font-family: var(--mono); font-size: 12px;
+    color: var(--fg-dim);
+    user-select: none;
+  }
+  .checkbox input { accent-color: var(--accent); }
+
+  /* ================= Saved searches ================= */
+  .saved-bar {
+    display: grid;
+    grid-template-columns: 1fr auto auto auto auto;
+    gap: 10px;
+    align-items: end;
+    padding: 14px 16px;
+  }
+  @media (max-width: 900px) {
+    .saved-bar { grid-template-columns: 1fr; }
+  }
+  .saved-meta {
+    padding: 10px 16px 14px 16px;
+    font-size: 11.5px;
+    color: var(--fg-faint);
+    font-family: var(--mono);
+    border-top: 1px dashed var(--border);
+  }
+  .saved-meta strong { color: var(--amber); font-weight: 500; }
+
+  /* Modal */
+  .modal-back {
+    position: fixed; inset: 0;
+    background: rgba(5,7,10,0.75);
+    backdrop-filter: blur(4px);
+    display: none;
+    align-items: center; justify-content: center;
+    z-index: 50;
+  }
+  .modal-back.show { display: flex; }
+  .modal {
+    background: var(--bg-panel);
+    border: 1px solid var(--border-hi);
+    border-radius: 10px;
+    width: min(500px, 92vw);
+    padding: 22px 24px;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+  }
+  .modal h3 {
+    margin: 0 0 14px 0;
+    font-family: var(--display);
+    font-size: 15px;
+    color: var(--accent);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+  .modal .field { margin-bottom: 12px; }
+  .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
+
+  /* Quick network filter rows */
+  .qfilter-row {
+    display: grid;
+    gap: 8px;
+    align-items: center;
+    margin-bottom: 8px;
+  }
+  .qfilter-ip   { grid-template-columns: 72px 1fr 140px 60px 78px; }
+  .qfilter-port { grid-template-columns: 72px 1fr 60px 78px; }
+  .qflabel {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--accent);
+    letter-spacing: 0.02em;
+  }
+  .qfilter-sep {
+    height: 1px;
+    background: var(--border);
+    margin: 14px 0 10px 0;
+  }
+  @media (max-width: 700px) {
+    .qfilter-ip, .qfilter-port { grid-template-columns: 1fr; }
+    .qflabel { padding-top: 6px; }
+  }
+
+  /* Datalist hint badge */
+  input[list] {
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='8' height='5' viewBox='0 0 10 6'><path fill='%236e7681' d='M0 0l5 6 5-6z'/></svg>");
+    background-repeat: no-repeat;
+    background-position: right 10px center;
+    padding-right: 26px;
+  }
+
+  footer {
+    text-align: center;
+    padding: 30px;
+    color: var(--fg-faint);
+    font-family: var(--mono);
+    font-size: 11px;
+  }
+  footer a { color: var(--accent-dim); text-decoration: none; }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="logo">&gt;_</span>
+    <div>
+      <div class="name">SPL FORGE</div>
+      <div class="tag">splunk search · query builder & tutorial</div>
+    </div>
+  </div>
+  <nav class="tabs" id="tabs">
+    <button data-tab="builder" class="active">Builder</button>
+    <button data-tab="tutorial">Tutorial</button>
+    <button data-tab="cheat">Cheat Sheet</button>
+  </nav>
+</header>
+
+<main>
+
+<!-- ========================================================= -->
+<!--                        BUILDER TAB                        -->
+<!-- ========================================================= -->
+<div class="pane active" id="pane-builder">
+
+  <!-- SAVED SEARCHES BAR -->
+  <div class="panel" style="margin-bottom: 20px;">
+    <div class="panel-head">
+      <h2>⎚ Saved Searches</h2>
+      <span class="hint" id="savedCount">0 saved</span>
+    </div>
+    <div class="saved-bar">
+      <div>
+        <label>Load a saved search</label>
+        <select id="savedPicker" onchange="previewSaved()">
+          <option value="">— no saved searches yet —</option>
+        </select>
+      </div>
+      <button class="btn primary" onclick="loadSaved()" title="Load the selected saved search into the builder">▸ Load</button>
+      <button class="btn danger" onclick="deleteSaved()" title="Delete the selected saved search">✕ Delete</button>
+      <button class="btn" onclick="exportSaved()" title="Download all saved searches as JSON">⇩ Export</button>
+      <button class="btn" onclick="document.getElementById('importFile').click()" title="Import saved searches from JSON">⇧ Import</button>
+      <input type="file" id="importFile" accept=".json,application/json" style="display:none" onchange="importSaved(event)" />
+    </div>
+    <div class="saved-meta" id="savedPreview">Select a saved search above to preview its description and query.</div>
+  </div>
+
+  <div class="builder">
+
+    <!-- LEFT: INPUTS -->
+    <div>
+      <div class="panel">
+        <div class="panel-head">
+          <h2>◎ Query Builder</h2>
+          <span class="hint">All fields optional · output updates live</span>
+        </div>
+
+        <!-- Time range -->
+        <div class="section">
+          <h3>Time Range</h3>
+          <div class="row row-3">
+            <div>
+              <label>Earliest</label>
+              <select id="earliest">
+                <option value="">(none — use default)</option>
+                <option value="-15m">Last 15 minutes</option>
+                <option value="-60m">Last 60 minutes</option>
+                <option value="-4h">Last 4 hours</option>
+                <option value="-24h">Last 24 hours</option>
+                <option value="-7d">Last 7 days</option>
+                <option value="-30d">Last 30 days</option>
+                <option value="-1h@h">Last full hour</option>
+                <option value="@d">Today (since midnight)</option>
+                <option value="-1d@d">Yesterday (full day)</option>
+                <option value="@w0">This week (Sunday)</option>
+                <option value="@mon">This month</option>
+                <option value="custom">Custom…</option>
+              </select>
+            </div>
+            <div>
+              <label>Latest</label>
+              <select id="latest">
+                <option value="">(none — now)</option>
+                <option value="now">now</option>
+                <option value="@d">End of today</option>
+                <option value="@d+1d">Start of tomorrow</option>
+                <option value="custom">Custom…</option>
+              </select>
+            </div>
+            <div>
+              <label>Custom modifier</label>
+              <input type="text" id="customTime" placeholder="e.g. -2d@d or 1700000000" />
+            </div>
+          </div>
+        </div>
+
+        <!-- Data source -->
+        <div class="section">
+          <h3>Data Source</h3>
+          <div class="row row-2">
+            <div>
+              <label>index=</label>
+              <input type="text" id="f-index" list="dl-index" placeholder="type or pick…" />
+            </div>
+            <div>
+              <label>sourcetype=</label>
+              <input type="text" id="f-sourcetype" list="dl-sourcetype" placeholder="type or pick…" />
+            </div>
+            <div>
+              <label>source=</label>
+              <input type="text" id="f-source" list="dl-source" placeholder="type or pick…" />
+            </div>
+            <div>
+              <label>host=</label>
+              <input type="text" id="f-host" list="dl-host" placeholder="type or pick…" />
+            </div>
+          </div>
+        </div>
+
+        <!-- Search terms -->
+        <div class="section">
+          <h3>Search Terms</h3>
+          <div>
+            <label>Raw keywords / phrases (space = AND, use OR/NOT, quote phrases)</label>
+            <textarea id="f-terms" placeholder='error OR warn NOT "scheduled reboot"'></textarea>
+          </div>
+        </div>
+
+        <!-- Quick Network Filters -->
+        <div class="section">
+          <h3>Quick Network Filters</h3>
+          <div style="font-size: 11.5px; color: var(--fg-faint); margin-bottom: 14px; font-family: var(--mono); line-height: 1.5;">
+            Type an IP and pick a mask, or type a port (single value or <code style="background:var(--bg-input);padding:1px 4px;border-radius:3px;">1024-65535</code> range), then click <strong style="color:var(--accent)">+ Add</strong>. Adds a field filter below.
+          </div>
+
+          <div class="qfilter-row qfilter-ip">
+            <span class="qflabel">src_ip</span>
+            <input type="text" id="qip-src" list="dl-common-ips" placeholder="10.1.2.3 · 192.168.0.0 · 2001:db8::" />
+            <select id="qip-src-mask" title="CIDR mask"></select>
+            <select id="qip-src-op" title="Operator">
+              <option value="=">=</option>
+              <option value="!=">≠</option>
+            </select>
+            <button class="btn" onclick="quickAddIp('src_ip','qip-src')">+ Add</button>
+          </div>
+
+          <div class="qfilter-row qfilter-ip">
+            <span class="qflabel">dest_ip</span>
+            <input type="text" id="qip-dst" list="dl-common-ips" placeholder="10.1.2.3 · 192.168.0.0 · 2001:db8::" />
+            <select id="qip-dst-mask" title="CIDR mask"></select>
+            <select id="qip-dst-op" title="Operator">
+              <option value="=">=</option>
+              <option value="!=">≠</option>
+            </select>
+            <button class="btn" onclick="quickAddIp('dest_ip','qip-dst')">+ Add</button>
+          </div>
+
+          <div class="qfilter-sep"></div>
+
+          <div class="qfilter-row qfilter-port">
+            <span class="qflabel">src_port</span>
+            <input type="text" id="qp-src" list="dl-common-ports" placeholder="443 · 1024-65535 · 49152-65535" />
+            <select id="qp-src-op" title="Operator">
+              <option value="=">=</option>
+              <option value="!=">≠</option>
+              <option value=">=">≥</option>
+              <option value="<=">≤</option>
+              <option value=">">&gt;</option>
+              <option value="<">&lt;</option>
+            </select>
+            <button class="btn" onclick="quickAddPort('src_port','qp-src')">+ Add</button>
+          </div>
+
+          <div class="qfilter-row qfilter-port">
+            <span class="qflabel">dest_port</span>
+            <input type="text" id="qp-dst" list="dl-common-ports" placeholder="443 · 1024-65535 · 49152-65535" />
+            <select id="qp-dst-op" title="Operator">
+              <option value="=">=</option>
+              <option value="!=">≠</option>
+              <option value=">=">≥</option>
+              <option value="<=">≤</option>
+              <option value=">">&gt;</option>
+              <option value="<">&lt;</option>
+            </select>
+            <button class="btn" onclick="quickAddPort('dest_port','qp-dst')">+ Add</button>
+          </div>
+        </div>
+
+        <!-- Field filters -->
+        <div class="section">
+          <h3>Field Filters</h3>
+          <div id="filters"></div>
+          <button class="add-btn" onclick="addFilter()">+ Add field filter</button>
+        </div>
+
+        <!-- Transforming -->
+        <div class="section">
+          <h3>Transforming (Stats / Chart / Top)</h3>
+          <div class="row row-2" style="margin-bottom:12px;">
+            <div>
+              <label>Command</label>
+              <select id="transform-cmd" onchange="updateTransformUI()">
+                <option value="">(none)</option>
+                <option value="stats">stats</option>
+                <option value="chart">chart</option>
+                <option value="timechart">timechart</option>
+                <option value="top">top</option>
+                <option value="rare">rare</option>
+              </select>
+            </div>
+            <div id="timechart-span-wrap" style="display:none;">
+              <label>span (timechart)</label>
+              <select id="timechart-span">
+                <option value="">auto</option>
+                <option value="1m">1m</option>
+                <option value="5m">5m</option>
+                <option value="15m">15m</option>
+                <option value="1h">1h</option>
+                <option value="1d">1d</option>
+              </select>
+            </div>
+            <div id="top-limit-wrap" style="display:none;">
+              <label>limit (top/rare)</label>
+              <input type="number" id="top-limit" placeholder="10" min="1" />
+            </div>
+          </div>
+          <div id="stats-wrap">
+            <div id="stats-rows"></div>
+            <button class="add-btn" onclick="addStatsRow()">+ Add aggregation</button>
+          </div>
+          <div id="groupby-wrap" style="margin-top:12px;">
+            <label>Group by (BY / OVER)</label>
+            <input type="text" id="f-groupby" placeholder="host, src_ip, status (comma-separated)" />
+          </div>
+        </div>
+
+        <!-- Eval -->
+        <div class="section">
+          <h3>Calculated Fields (eval)</h3>
+          <div id="evals"></div>
+          <button class="add-btn" onclick="addEval()">+ Add eval expression</button>
+        </div>
+
+        <!-- Rex -->
+        <div class="section">
+          <h3>Regex Extraction (rex)</h3>
+          <div id="rexes"></div>
+          <button class="add-btn" onclick="addRex()">+ Add rex</button>
+        </div>
+
+        <!-- Post filters -->
+        <div class="section">
+          <h3>Post-Filter (where)</h3>
+          <div>
+            <label>where expression (runs after stats/eval)</label>
+            <input type="text" id="f-where" placeholder='count > 10 AND like(host, "leaf%")' />
+          </div>
+        </div>
+
+        <!-- Output shaping -->
+        <div class="section">
+          <h3>Output Shaping</h3>
+          <div class="row row-2">
+            <div>
+              <label>dedup fields</label>
+              <input type="text" id="f-dedup" placeholder="src_ip, dest_port" />
+            </div>
+            <div>
+              <label>table / fields</label>
+              <input type="text" id="f-table" placeholder="_time, host, msg" />
+            </div>
+            <div>
+              <label>sort (prefix - for desc)</label>
+              <input type="text" id="f-sort" placeholder="-count, host" />
+            </div>
+            <div>
+              <label>head (limit rows)</label>
+              <input type="number" id="f-head" placeholder="100" min="1" />
+            </div>
+          </div>
+        </div>
+
+        <!-- Advanced -->
+        <div class="section">
+          <h3>Advanced</h3>
+          <div class="row">
+            <div>
+              <label>rename (old AS new, comma-separated)</label>
+              <input type="text" id="f-rename" placeholder='src_ip AS "Source IP", count AS Hits' />
+            </div>
+            <div>
+              <label>additional raw pipeline (appended as-is)</label>
+              <textarea id="f-raw" placeholder="| lookup threats.csv ip AS src_ip OUTPUT category | fillnull value=unknown"></textarea>
+            </div>
+            <div>
+              <label class="checkbox" style="margin-top:8px;">
+                <input type="checkbox" id="f-pretty" checked />
+                Pretty-print (newline before each pipe)
+              </label>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- RIGHT: OUTPUT -->
+    <div class="output-panel">
+      <div class="panel">
+        <div class="panel-head">
+          <h2>◈ Generated SPL</h2>
+          <span class="hint" id="charCount">0 chars</span>
+        </div>
+        <div class="section" style="padding: 16px;">
+          <div class="output-box" id="output"><span class="placeholder">// Start filling in fields on the left — your query will build here.</span></div>
+          <div class="actions">
+            <button class="btn primary" onclick="copyQuery()">📋 Copy</button>
+            <button class="btn" onclick="openSaveModal()">💾 Save search…</button>
+            <button class="btn" onclick="clearAll()">✕ Clear all</button>
+          </div>
+          <div class="output-meta" id="meta">
+            <strong>Pipeline summary</strong><br />
+            <span id="pipelineSummary">No pipeline yet.</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ========================================================= -->
+<!--                        TUTORIAL TAB                       -->
+<!-- ========================================================= -->
+<div class="pane" id="pane-tutorial">
+  <div class="tutorial">
+
+    <aside class="toc">
+      <h3>Lessons</h3>
+      <ol id="toc-list">
+        <li><a href="#lesson-1">What is SPL?</a></li>
+        <li><a href="#lesson-2">Search terms & quoting</a></li>
+        <li><a href="#lesson-3">Boolean logic & wildcards</a></li>
+        <li><a href="#lesson-4">Field searches & comparisons</a></li>
+        <li><a href="#lesson-5">Time ranges</a></li>
+        <li><a href="#lesson-6">The pipeline (|)</a></li>
+        <li><a href="#lesson-7">fields, table, rename</a></li>
+        <li><a href="#lesson-8">stats & aggregations</a></li>
+        <li><a href="#lesson-9">top, rare, chart, timechart</a></li>
+        <li><a href="#lesson-10">eval & calculated fields</a></li>
+        <li><a href="#lesson-11">where vs search</a></li>
+        <li><a href="#lesson-12">rex — regex extraction</a></li>
+        <li><a href="#lesson-13">dedup, sort, head, tail</a></li>
+        <li><a href="#lesson-14">transaction</a></li>
+        <li><a href="#lesson-15">Subsearches</a></li>
+        <li><a href="#lesson-16">join & append</a></li>
+        <li><a href="#lesson-17">lookups</a></li>
+        <li><a href="#lesson-18">Network engineering patterns</a></li>
+        <li><a href="#lesson-19">Performance tips</a></li>
+      </ol>
+    </aside>
+
+    <article class="lessons">
+
+      <section id="lesson-1">
+        <div class="lesson-num">Lesson 01 · Fundamentals</div>
+        <h2>What is SPL?</h2>
+        <p><strong>SPL</strong> (Search Processing Language) is Splunk's query language. Every SPL search is a <em>pipeline</em>: events flow left-to-right, each <code>|</code> passes the running result set into the next command.</p>
+        <div class="spl-block" data-spl='index=network sourcetype=cisco:ios host=leaf-01 | stats count by severity'><span class="copy">copy</span><span class="kw">index</span>=network <span class="kw">sourcetype</span>=cisco:ios <span class="kw">host</span>=leaf-01 <span class="pipe">|</span> <span class="fn">stats</span> <span class="fn">count</span> <span class="kw">by</span> severity</div>
+        <p>Read it as: <em>"pull events from the network index where sourcetype is cisco:ios and host is leaf-01, then count them grouped by severity."</em></p>
+        <p>Every SPL query has two halves:</p>
+        <ol>
+          <li><strong>Retrieval</strong> — what events to pull from the index (before the first <code>|</code>).</li>
+          <li><strong>Transformation</strong> — what to do with them (everything after).</li>
+        </ol>
+        <div class="callout info"><strong>Rule of thumb:</strong> filter as much as you can in the retrieval half. It's dramatically faster than filtering after retrieval.</div>
+      </section>
+
+      <section id="lesson-2">
+        <div class="lesson-num">Lesson 02 · Basics</div>
+        <h2>Search terms & quoting</h2>
+        <p>Any bare word at the start of a query is a keyword match against raw event text.</p>
+        <div class="spl-block" data-spl='index=firewall denied'><span class="copy">copy</span><span class="kw">index</span>=firewall denied</div>
+        <p>Multiple words = implicit AND:</p>
+        <div class="spl-block" data-spl='index=firewall denied tcp'><span class="copy">copy</span><span class="kw">index</span>=firewall denied tcp</div>
+        <p>Use quotes for phrases or values with spaces/special characters:</p>
+        <div class="spl-block" data-spl='index=syslog "interface Ethernet1/1 is down"'><span class="copy">copy</span><span class="kw">index</span>=syslog <span class="str">"interface Ethernet1/1 is down"</span></div>
+        <div class="callout"><strong>Gotcha:</strong> SPL is case-insensitive for <em>keywords</em> but case-sensitive for <em>field values</em>. <code>error</code> and <code>ERROR</code> both match as keywords; <code>status=Error</code> does not equal <code>status=error</code>.</div>
+      </section>
+
+      <section id="lesson-3">
+        <div class="lesson-num">Lesson 03 · Basics</div>
+        <h2>Boolean logic & wildcards</h2>
+        <p>SPL supports <code>AND</code>, <code>OR</code>, <code>NOT</code> (must be uppercase). Use parentheses to group.</p>
+        <div class="spl-block" data-spl='index=auth (failed OR denied) NOT user=admin'><span class="copy">copy</span><span class="kw">index</span>=auth (failed <span class="op">OR</span> denied) <span class="op">NOT</span> user=admin</div>
+        <p>Wildcard <code>*</code> matches anything. Leading wildcards are expensive — avoid them.</p>
+        <div class="spl-block" data-spl='index=web status=5* user_agent=*bot*'><span class="copy">copy</span><span class="kw">index</span>=web status=5* user_agent=*bot*</div>
+        <div class="callout warn"><strong>Performance:</strong> <code>*error</code> is slow (leading wildcard). <code>error*</code> is fine. Prefer anchored patterns.</div>
+      </section>
+
+      <section id="lesson-4">
+        <div class="lesson-num">Lesson 04 · Basics</div>
+        <h2>Field searches & comparison operators</h2>
+        <p>Fields are key=value pairs Splunk auto-extracts (or you define). Operators:</p>
+        <table class="ref">
+          <thead><tr><th>Operator</th><th>Meaning</th><th>Example</th></tr></thead>
+          <tbody>
+            <tr><td><code>=</code></td><td>equals (supports <code>*</code>)</td><td><code>status=200</code></td></tr>
+            <tr><td><code>!=</code></td><td>not equals</td><td><code>status!=200</code></td></tr>
+            <tr><td><code>&lt; &lt;= &gt; &gt;=</code></td><td>numeric compare</td><td><code>bytes&gt;1000000</code></td></tr>
+            <tr><td><code>IN()</code></td><td>any of</td><td><code>severity IN (crit, err, warn)</code></td></tr>
+          </tbody>
+        </table>
+        <div class="spl-block" data-spl='index=firewall action=blocked dest_port IN (22, 23, 3389) bytes>500'><span class="copy">copy</span><span class="kw">index</span>=firewall action=blocked dest_port <span class="op">IN</span> (<span class="num">22</span>, <span class="num">23</span>, <span class="num">3389</span>) bytes&gt;<span class="num">500</span></div>
+      </section>
+
+      <section id="lesson-5">
+        <div class="lesson-num">Lesson 05 · Basics</div>
+        <h2>Time ranges</h2>
+        <p>Use relative time modifiers with <code>earliest</code> / <code>latest</code>, or the time picker in the GUI. Syntax: <code>-[n][unit][@snap]</code>.</p>
+        <table class="ref">
+          <thead><tr><th>Units</th><th>Meaning</th></tr></thead>
+          <tbody>
+            <tr><td><code>s, m, h, d, w, mon, y</code></td><td>seconds, minutes, hours, days, weeks, months, years</td></tr>
+            <tr><td><code>@</code></td><td>snap-to: truncates to unit boundary</td></tr>
+            <tr><td><code>now</code></td><td>right now</td></tr>
+          </tbody>
+        </table>
+        <div class="spl-block" data-spl='index=syslog earliest=-24h@h latest=now severity=error'><span class="copy">copy</span><span class="kw">index</span>=syslog <span class="kw">earliest</span>=-24h@h <span class="kw">latest</span>=now severity=error</div>
+        <p><code>-24h@h</code> = "24 hours ago, snapped to the start of that hour" — makes cached results reusable.</p>
+        <div class="callout info"><strong>Tip:</strong> Snapping (<code>@h</code>, <code>@d</code>) makes Splunk cache better. Queries with identical snapped windows hit cache.</div>
+      </section>
+
+      <section id="lesson-6">
+        <div class="lesson-num">Lesson 06 · Pipelines</div>
+        <h2>The pipeline (|)</h2>
+        <p>Everything after the initial retrieval is chained with pipes. Each command takes the previous result set as input.</p>
+        <div class="spl-block" data-spl='index=web
+| stats count by status
+| sort -count
+| head 5'><span class="copy">copy</span><span class="kw">index</span>=web
+<span class="pipe">|</span> <span class="fn">stats</span> <span class="fn">count</span> <span class="kw">by</span> status
+<span class="pipe">|</span> <span class="fn">sort</span> -count
+<span class="pipe">|</span> <span class="fn">head</span> <span class="num">5</span></div>
+        <p>Pipeline: retrieve web events → aggregate count per status code → sort descending → take top 5.</p>
+      </section>
+
+      <section id="lesson-7">
+        <div class="lesson-num">Lesson 07 · Pipelines</div>
+        <h2>fields, table, rename</h2>
+        <p><code>fields</code> keeps (or drops) columns early — good for performance. <code>table</code> is similar but enforces display order. <code>rename</code> relabels columns.</p>
+        <div class="spl-block" data-spl='index=network
+| fields _time host src_ip dest_ip action
+| rename src_ip AS "Source", dest_ip AS "Destination"
+| table _time host Source Destination action'><span class="copy">copy</span><span class="kw">index</span>=network
+<span class="pipe">|</span> <span class="fn">fields</span> _time host src_ip dest_ip action
+<span class="pipe">|</span> <span class="fn">rename</span> src_ip <span class="kw">AS</span> <span class="str">"Source"</span>, dest_ip <span class="kw">AS</span> <span class="str">"Destination"</span>
+<span class="pipe">|</span> <span class="fn">table</span> _time host Source Destination action</div>
+        <div class="callout info"><strong>Perf:</strong> <code>fields</code> early in the pipeline reduces data moved between search peers. Use it before heavy transformations.</div>
+      </section>
+
+      <section id="lesson-8">
+        <div class="lesson-num">Lesson 08 · Aggregation</div>
+        <h2>stats & aggregations</h2>
+        <p><code>stats</code> is the workhorse transforming command. Syntax: <code>stats [fn(field) AS alias]... [by field1, field2]</code>.</p>
+        <p>Common functions:</p>
+        <table class="ref">
+          <thead><tr><th>Function</th><th>What it does</th></tr></thead>
+          <tbody>
+            <tr><td><code>count</code></td><td>number of events</td></tr>
+            <tr><td><code>count(field)</code></td><td>events where field is non-null</td></tr>
+            <tr><td><code>dc(field)</code> / <code>distinct_count</code></td><td>unique values of field</td></tr>
+            <tr><td><code>sum, avg, min, max</code></td><td>numeric math</td></tr>
+            <tr><td><code>median, stdev, perc95</code></td><td>statistical</td></tr>
+            <tr><td><code>values(field)</code></td><td>multi-value list of unique values</td></tr>
+            <tr><td><code>list(field)</code></td><td>all values, including duplicates, in order</td></tr>
+            <tr><td><code>first, last, earliest, latest</code></td><td>value positions</td></tr>
+          </tbody>
+        </table>
+        <div class="spl-block" data-spl='index=firewall action=blocked
+| stats count AS hits,
+        dc(src_ip) AS unique_sources,
+        sum(bytes) AS total_bytes,
+        values(dest_port) AS ports_hit
+  by host'><span class="copy">copy</span><span class="kw">index</span>=firewall action=blocked
+<span class="pipe">|</span> <span class="fn">stats</span> <span class="fn">count</span> <span class="kw">AS</span> hits,
+        <span class="fn">dc</span>(src_ip) <span class="kw">AS</span> unique_sources,
+        <span class="fn">sum</span>(bytes) <span class="kw">AS</span> total_bytes,
+        <span class="fn">values</span>(dest_port) <span class="kw">AS</span> ports_hit
+  <span class="kw">by</span> host</div>
+      </section>
+
+      <section id="lesson-9">
+        <div class="lesson-num">Lesson 09 · Aggregation</div>
+        <h2>top, rare, chart, timechart</h2>
+        <p><code>top</code> is shorthand for the most common pattern: count + sort + head.</p>
+        <div class="spl-block" data-spl='index=web
+| top limit=10 useother=f status'><span class="copy">copy</span><span class="kw">index</span>=web
+<span class="pipe">|</span> <span class="fn">top</span> limit=<span class="num">10</span> useother=f status</div>
+        <p><code>rare</code> is the inverse — least common. <code>chart</code> is like stats but pivots into a two-dimensional table (good for visualizations).</p>
+        <div class="spl-block" data-spl='index=network
+| chart count over host by action'><span class="copy">copy</span><span class="kw">index</span>=network
+<span class="pipe">|</span> <span class="fn">chart</span> <span class="fn">count</span> <span class="kw">over</span> host <span class="kw">by</span> action</div>
+        <p><code>timechart</code> buckets into time intervals — perfect for trend lines.</p>
+        <div class="spl-block" data-spl='index=firewall action=blocked
+| timechart span=5m count by dest_port limit=5'><span class="copy">copy</span><span class="kw">index</span>=firewall action=blocked
+<span class="pipe">|</span> <span class="fn">timechart</span> span=5m <span class="fn">count</span> <span class="kw">by</span> dest_port limit=<span class="num">5</span></div>
+      </section>
+
+      <section id="lesson-10">
+        <div class="lesson-num">Lesson 10 · Transforming</div>
+        <h2>eval & calculated fields</h2>
+        <p><code>eval</code> creates new fields or modifies existing ones using expressions, functions, and conditionals.</p>
+        <div class="spl-block" data-spl='index=web
+| eval response_kb = round(bytes/1024, 2)
+| eval is_error = if(status >= 400, "yes", "no")
+| eval tier = case(
+    status < 300, "ok",
+    status < 400, "redirect",
+    status < 500, "client_error",
+    true(), "server_error"
+  )'><span class="copy">copy</span><span class="kw">index</span>=web
+<span class="pipe">|</span> <span class="fn">eval</span> response_kb = <span class="fn">round</span>(bytes/<span class="num">1024</span>, <span class="num">2</span>)
+<span class="pipe">|</span> <span class="fn">eval</span> is_error = <span class="fn">if</span>(status &gt;= <span class="num">400</span>, <span class="str">"yes"</span>, <span class="str">"no"</span>)
+<span class="pipe">|</span> <span class="fn">eval</span> tier = <span class="fn">case</span>(
+    status &lt; <span class="num">300</span>, <span class="str">"ok"</span>,
+    status &lt; <span class="num">400</span>, <span class="str">"redirect"</span>,
+    status &lt; <span class="num">500</span>, <span class="str">"client_error"</span>,
+    <span class="fn">true</span>(), <span class="str">"server_error"</span>
+  )</div>
+        <p>Useful eval functions:</p>
+        <ul>
+          <li><code>if(cond, yes, no)</code> — ternary</li>
+          <li><code>case(c1,v1, c2,v2, ...)</code> — multi-branch; use <code>true()</code> as the default</li>
+          <li><code>coalesce(a, b, c)</code> — first non-null</li>
+          <li><code>len(s)</code>, <code>lower(s)</code>, <code>upper(s)</code>, <code>replace(s, re, new)</code></li>
+          <li><code>strftime(_time, "%F %T")</code> — format epoch to string</li>
+          <li><code>mvcount(mv)</code>, <code>mvindex(mv, n)</code> — multi-value handling</li>
+          <li><code>cidrmatch("10.0.0.0/8", ip)</code> — CIDR tests (very handy for networking)</li>
+        </ul>
+      </section>
+
+      <section id="lesson-11">
+        <div class="lesson-num">Lesson 11 · Filtering</div>
+        <h2>where vs search</h2>
+        <p>Both filter events. The difference matters:</p>
+        <ul>
+          <li><strong><code>search</code></strong> — can go at the start (implicit) or after a pipe. Matches fields and raw text. Runs on indexed data efficiently.</li>
+          <li><strong><code>where</code></strong> — only after a pipe. Evaluates an expression; works with calculated fields from <code>eval</code>/<code>stats</code>. Supports eval functions like <code>like()</code>, <code>isnotnull()</code>, <code>cidrmatch()</code>.</li>
+        </ul>
+        <div class="spl-block" data-spl='index=firewall
+| stats count AS hits by src_ip
+| where hits > 100 AND cidrmatch("10.0.0.0/8", src_ip)'><span class="copy">copy</span><span class="kw">index</span>=firewall
+<span class="pipe">|</span> <span class="fn">stats</span> <span class="fn">count</span> <span class="kw">AS</span> hits <span class="kw">by</span> src_ip
+<span class="pipe">|</span> <span class="fn">where</span> hits &gt; <span class="num">100</span> <span class="op">AND</span> <span class="fn">cidrmatch</span>(<span class="str">"10.0.0.0/8"</span>, src_ip)</div>
+        <div class="callout"><strong>Rule:</strong> filter raw events with <code>search</code>; filter <em>computed</em> values with <code>where</code>.</div>
+      </section>
+
+      <section id="lesson-12">
+        <div class="lesson-num">Lesson 12 · Advanced</div>
+        <h2>rex — regex extraction</h2>
+        <p><code>rex</code> pulls new fields out of existing text using named capture groups.</p>
+        <div class="spl-block" data-spl='index=syslog sourcetype=cisco:ios
+| rex field=_raw "%LINEPROTO-5-UPDOWN: Line protocol on Interface (?<intf>\S+), changed state to (?<state>\w+)"
+| stats count by host, intf, state'><span class="copy">copy</span><span class="kw">index</span>=syslog <span class="kw">sourcetype</span>=cisco:ios
+<span class="pipe">|</span> <span class="fn">rex</span> field=_raw <span class="str">"%LINEPROTO-5-UPDOWN: Line protocol on Interface (?&lt;intf&gt;\S+), changed state to (?&lt;state&gt;\w+)"</span>
+<span class="pipe">|</span> <span class="fn">stats</span> <span class="fn">count</span> <span class="kw">by</span> host, intf, state</div>
+        <p>Syntax: <code>(?&lt;fieldname&gt;pattern)</code>. Default field is <code>_raw</code>. Use <code>max_match=0</code> to capture all matches into a multi-value field.</p>
+        <p>Replacement mode (<code>mode=sed</code>):</p>
+        <div class="spl-block" data-spl='| rex field=url mode=sed "s/\?.*//"'><span class="copy">copy</span><span class="pipe">|</span> <span class="fn">rex</span> field=url mode=sed <span class="str">"s/\?.*//"</span></div>
+        <p>…strips query strings from URLs.</p>
+      </section>
+
+      <section id="lesson-13">
+        <div class="lesson-num">Lesson 13 · Shaping</div>
+        <h2>dedup, sort, head, tail</h2>
+        <ul>
+          <li><code>dedup N field1, field2</code> — keep at most N events per unique combo (default N=1)</li>
+          <li><code>sort [N] [+/-]field</code> — <code>+</code> asc (default), <code>-</code> desc; optional limit</li>
+          <li><code>head N</code> / <code>tail N</code> — first / last N events</li>
+          <li><code>reverse</code> — reverse result order</li>
+        </ul>
+        <div class="spl-block" data-spl='index=auth action=failure
+| dedup 3 user
+| sort - _time
+| head 50'><span class="copy">copy</span><span class="kw">index</span>=auth action=failure
+<span class="pipe">|</span> <span class="fn">dedup</span> <span class="num">3</span> user
+<span class="pipe">|</span> <span class="fn">sort</span> - _time
+<span class="pipe">|</span> <span class="fn">head</span> <span class="num">50</span></div>
+      </section>
+
+      <section id="lesson-14">
+        <div class="lesson-num">Lesson 14 · Advanced</div>
+        <h2>transaction</h2>
+        <p>Groups related events into single "transactions" based on shared fields, time gaps, or start/end markers. Powerful but slow — use only when <code>stats</code> won't do.</p>
+        <div class="spl-block" data-spl='index=web sessionid=*
+| transaction sessionid maxspan=30m maxpause=5m
+| where duration > 600'><span class="copy">copy</span><span class="kw">index</span>=web sessionid=*
+<span class="pipe">|</span> <span class="fn">transaction</span> sessionid maxspan=30m maxpause=5m
+<span class="pipe">|</span> <span class="fn">where</span> duration &gt; <span class="num">600</span></div>
+        <div class="callout warn"><strong>When to avoid:</strong> if you can answer your question with <code>stats ... by sessionid</code>, use that. <code>transaction</code> keeps raw events in memory and scales poorly.</div>
+      </section>
+
+      <section id="lesson-15">
+        <div class="lesson-num">Lesson 15 · Advanced</div>
+        <h2>Subsearches</h2>
+        <p>A subsearch runs first and returns results used by the outer search, using <code>[]</code> brackets. Common pattern: "find all X where Y matches a list from another search."</p>
+        <div class="spl-block" data-spl='index=web status=500
+    [ search index=threat category=malicious | fields src_ip ]'><span class="copy">copy</span><span class="kw">index</span>=web status=<span class="num">500</span>
+    [ <span class="fn">search</span> <span class="kw">index</span>=threat category=malicious <span class="pipe">|</span> <span class="fn">fields</span> src_ip ]</div>
+        <p>The inner query returns IPs; outer treats that list as an OR filter on <code>src_ip</code>.</p>
+        <div class="callout warn"><strong>Limits:</strong> subsearches cap at 10,000 results and 60-second runtime by default. They're for lookups, not bulk joins.</div>
+      </section>
+
+      <section id="lesson-16">
+        <div class="lesson-num">Lesson 16 · Advanced</div>
+        <h2>join & append</h2>
+        <p><code>join</code> SQL-style joins another search on a shared field. Slow — prefer <code>stats</code> when possible.</p>
+        <div class="spl-block" data-spl='index=web
+| stats count AS reqs by src_ip
+| join type=left src_ip
+    [ search index=geo
+      | stats values(country) AS country by src_ip ]'><span class="copy">copy</span><span class="kw">index</span>=web
+<span class="pipe">|</span> <span class="fn">stats</span> <span class="fn">count</span> <span class="kw">AS</span> reqs <span class="kw">by</span> src_ip
+<span class="pipe">|</span> <span class="fn">join</span> type=left src_ip
+    [ <span class="fn">search</span> <span class="kw">index</span>=geo
+      <span class="pipe">|</span> <span class="fn">stats</span> <span class="fn">values</span>(country) <span class="kw">AS</span> country <span class="kw">by</span> src_ip ]</div>
+        <p>The <code>stats</code> equivalent (much faster when both searches share a field):</p>
+        <div class="spl-block" data-spl='(index=web) OR (index=geo)
+| stats count AS reqs, values(country) AS country by src_ip'><span class="copy">copy</span>(<span class="kw">index</span>=web) <span class="op">OR</span> (<span class="kw">index</span>=geo)
+<span class="pipe">|</span> <span class="fn">stats</span> <span class="fn">count</span> <span class="kw">AS</span> reqs, <span class="fn">values</span>(country) <span class="kw">AS</span> country <span class="kw">by</span> src_ip</div>
+        <p><code>append</code> runs a second search and concatenates its results at the end. Rarely the right tool; usually <code>stats</code> does the job.</p>
+      </section>
+
+      <section id="lesson-17">
+        <div class="lesson-num">Lesson 17 · Advanced</div>
+        <h2>lookups</h2>
+        <p><code>lookup</code> enriches events with data from a CSV or KV store — great for mapping IPs to device names, MAC prefixes to vendors, etc.</p>
+        <div class="spl-block" data-spl='index=network
+| lookup devices.csv ip AS src_ip OUTPUT hostname AS src_host, role AS src_role
+| stats count by src_host, src_role, action'><span class="copy">copy</span><span class="kw">index</span>=network
+<span class="pipe">|</span> <span class="fn">lookup</span> devices.csv ip <span class="kw">AS</span> src_ip <span class="kw">OUTPUT</span> hostname <span class="kw">AS</span> src_host, role <span class="kw">AS</span> src_role
+<span class="pipe">|</span> <span class="fn">stats</span> <span class="fn">count</span> <span class="kw">by</span> src_host, src_role, action</div>
+        <p><code>inputlookup</code> reads a CSV as its own event source — useful for scheduled reports.</p>
+      </section>
+
+      <section id="lesson-18">
+        <div class="lesson-num">Lesson 18 · Patterns</div>
+        <h2>Network engineering patterns</h2>
+
+        <h3>Interface flap detection</h3>
+        <div class="spl-block" data-spl='index=syslog sourcetype=cisco:ios ("LINEPROTO-5-UPDOWN" OR "LINK-3-UPDOWN")
+| rex "Interface (?<intf>\S+?),"
+| bucket _time span=5m
+| stats count AS flaps by _time, host, intf
+| where flaps >= 4
+| sort - _time'><span class="copy">copy</span><span class="kw">index</span>=syslog <span class="kw">sourcetype</span>=cisco:ios (<span class="str">"LINEPROTO-5-UPDOWN"</span> <span class="op">OR</span> <span class="str">"LINK-3-UPDOWN"</span>)
+<span class="pipe">|</span> <span class="fn">rex</span> <span class="str">"Interface (?&lt;intf&gt;\S+?),"</span>
+<span class="pipe">|</span> <span class="fn">bucket</span> _time span=5m
+<span class="pipe">|</span> <span class="fn">stats</span> <span class="fn">count</span> <span class="kw">AS</span> flaps <span class="kw">by</span> _time, host, intf
+<span class="pipe">|</span> <span class="fn">where</span> flaps &gt;= <span class="num">4</span>
+<span class="pipe">|</span> <span class="fn">sort</span> - _time</div>
+
+        <h3>BGP neighbor state changes</h3>
+        <div class="spl-block" data-spl='index=syslog ("BGP-5-ADJCHANGE" OR "BGP_NEIGHBOR_STATE_CHANGED")
+| rex "neighbor (?<peer>\d+\.\d+\.\d+\.\d+)"
+| rex "(?<state>Up|Down|Established|Idle|Active)"
+| stats count by host, peer, state
+| where state IN ("Down", "Idle", "Active")'><span class="copy">copy</span><span class="kw">index</span>=syslog (<span class="str">"BGP-5-ADJCHANGE"</span> <span class="op">OR</span> <span class="str">"BGP_NEIGHBOR_STATE_CHANGED"</span>)
+<span class="pipe">|</span> <span class="fn">rex</span> <span class="str">"neighbor (?&lt;peer&gt;\d+\.\d+\.\d+\.\d+)"</span>
+<span class="pipe">|</span> <span class="fn">rex</span> <span class="str">"(?&lt;state&gt;Up|Down|Established|Idle|Active)"</span>
+<span class="pipe">|</span> <span class="fn">stats</span> <span class="fn">count</span> <span class="kw">by</span> host, peer, state
+<span class="pipe">|</span> <span class="fn">where</span> state <span class="op">IN</span> (<span class="str">"Down"</span>, <span class="str">"Idle"</span>, <span class="str">"Active"</span>)</div>
+
+        <h3>Firewall top talkers (denied)</h3>
+        <div class="spl-block" data-spl='index=firewall action=denied earliest=-1h
+| stats sum(bytes) AS total_bytes, dc(dest_ip) AS targets, count AS attempts by src_ip
+| where NOT cidrmatch("10.0.0.0/8", src_ip)
+| sort - total_bytes
+| head 20'><span class="copy">copy</span><span class="kw">index</span>=firewall action=denied <span class="kw">earliest</span>=-1h
+<span class="pipe">|</span> <span class="fn">stats</span> <span class="fn">sum</span>(bytes) <span class="kw">AS</span> total_bytes, <span class="fn">dc</span>(dest_ip) <span class="kw">AS</span> targets, <span class="fn">count</span> <span class="kw">AS</span> attempts <span class="kw">by</span> src_ip
+<span class="pipe">|</span> <span class="fn">where</span> <span class="op">NOT</span> <span class="fn">cidrmatch</span>(<span class="str">"10.0.0.0/8"</span>, src_ip)
+<span class="pipe">|</span> <span class="fn">sort</span> - total_bytes
+<span class="pipe">|</span> <span class="fn">head</span> <span class="num">20</span></div>
+
+        <h3>VXLAN/EVPN — MAC moves</h3>
+        <div class="spl-block" data-spl='index=syslog ("MAC_MOVE" OR "L2FM-4-L2FM_MAC_MOVE" OR "MAC-address moved")
+| rex "(?<mac>([0-9a-f]{2}[:.-]){5}[0-9a-f]{2}|([0-9a-f]{4}\.){2}[0-9a-f]{4})"
+| stats count AS moves, values(host) AS seen_on, dc(host) AS vtep_count by mac
+| where moves > 5
+| sort - moves'><span class="copy">copy</span><span class="kw">index</span>=syslog (<span class="str">"MAC_MOVE"</span> <span class="op">OR</span> <span class="str">"L2FM-4-L2FM_MAC_MOVE"</span> <span class="op">OR</span> <span class="str">"MAC-address moved"</span>)
+<span class="pipe">|</span> <span class="fn">rex</span> <span class="str">"(?&lt;mac&gt;([0-9a-f]{2}[:.-]){5}[0-9a-f]{2}|([0-9a-f]{4}\.){2}[0-9a-f]{4})"</span>
+<span class="pipe">|</span> <span class="fn">stats</span> <span class="fn">count</span> <span class="kw">AS</span> moves, <span class="fn">values</span>(host) <span class="kw">AS</span> seen_on, <span class="fn">dc</span>(host) <span class="kw">AS</span> vtep_count <span class="kw">by</span> mac
+<span class="pipe">|</span> <span class="fn">where</span> moves &gt; <span class="num">5</span>
+<span class="pipe">|</span> <span class="fn">sort</span> - moves</div>
+
+        <h3>Config changes (login + config events)</h3>
+        <div class="spl-block" data-spl='index=syslog ("SYS-5-CONFIG_I" OR "CONFIG_I" OR "%PARSER-5-HIDDEN")
+| rex "by (?<user>\S+) on (?<tty>\S+) from (?<src>\S+)"
+| table _time host user src tty _raw
+| sort - _time'><span class="copy">copy</span><span class="kw">index</span>=syslog (<span class="str">"SYS-5-CONFIG_I"</span> <span class="op">OR</span> <span class="str">"CONFIG_I"</span> <span class="op">OR</span> <span class="str">"%PARSER-5-HIDDEN"</span>)
+<span class="pipe">|</span> <span class="fn">rex</span> <span class="str">"by (?&lt;user&gt;\S+) on (?&lt;tty&gt;\S+) from (?&lt;src&gt;\S+)"</span>
+<span class="pipe">|</span> <span class="fn">table</span> _time host user src tty _raw
+<span class="pipe">|</span> <span class="fn">sort</span> - _time</div>
+      </section>
+
+      <section id="lesson-19">
+        <div class="lesson-num">Lesson 19 · Operations</div>
+        <h2>Performance tips</h2>
+        <ol>
+          <li><strong>Always specify index and time range.</strong> "All indexes, all time" is the cardinal sin.</li>
+          <li><strong>Push filters left.</strong> Filter in the initial search, not with <code>where</code> after.</li>
+          <li><strong>Use <code>fields</code> early</strong> to drop columns you don't need.</li>
+          <li><strong>Avoid leading wildcards</strong> (<code>*foo</code>). Trailing wildcards are fine.</li>
+          <li><strong>Prefer <code>stats</code> over <code>transaction</code></strong> unless you truly need raw event grouping.</li>
+          <li><strong>Prefer <code>stats</code> over <code>join</code></strong> when the two searches share a field — it's often 10×+ faster.</li>
+          <li><strong>Snap time ranges</strong> (<code>-24h@h</code>) to hit the cache.</li>
+          <li><strong>Use accelerated data models</strong> with <code>tstats</code> when doing volume metrics over long windows — orders of magnitude faster than <code>stats</code>.</li>
+        </ol>
+        <div class="spl-block" data-spl='| tstats count where index=firewall earliest=-7d@h by _time, action span=1h
+| where action="blocked"'><span class="copy">copy</span><span class="pipe">|</span> <span class="fn">tstats</span> <span class="fn">count</span> <span class="kw">where</span> <span class="kw">index</span>=firewall <span class="kw">earliest</span>=-7d@h <span class="kw">by</span> _time, action span=1h
+<span class="pipe">|</span> <span class="fn">where</span> action=<span class="str">"blocked"</span></div>
+        <div class="callout info"><strong>tstats</strong> runs against indexed fields only, without reading raw events — dramatically faster for high-volume aggregations.</div>
+      </section>
+
+    </article>
+  </div>
+</div>
+
+<!-- ========================================================= -->
+<!--                      CHEAT SHEET TAB                      -->
+<!-- ========================================================= -->
+<div class="pane" id="pane-cheat">
+  <div class="cheat-grid">
+
+    <div class="cheat-card">
+      <h3>Retrieval keywords</h3>
+      <dl>
+        <dt>index</dt><dd>Which Splunk index to search</dd>
+        <dt>sourcetype</dt><dd>Logical type of source data</dd>
+        <dt>source</dt><dd>Specific file/stream origin</dd>
+        <dt>host</dt><dd>System the event came from</dd>
+        <dt>earliest / latest</dt><dd>Time bounds</dd>
+      </dl>
+    </div>
+
+    <div class="cheat-card">
+      <h3>Boolean operators</h3>
+      <dl>
+        <dt>AND</dt><dd>implicit between terms</dd>
+        <dt>OR</dt><dd>either side matches</dd>
+        <dt>NOT / !=</dt><dd>negation</dd>
+        <dt>( )</dt><dd>grouping</dd>
+        <dt>IN(a,b,c)</dt><dd>any of list</dd>
+      </dl>
+    </div>
+
+    <div class="cheat-card">
+      <h3>Time snap modifiers</h3>
+      <dl>
+        <dt>-15m</dt><dd>15 minutes ago</dd>
+        <dt>-1h@h</dt><dd>1 hour ago, snapped</dd>
+        <dt>-1d@d</dt><dd>Start of yesterday</dd>
+        <dt>@w1</dt><dd>Start of this week (Mon)</dd>
+        <dt>@mon</dt><dd>Start of this month</dd>
+        <dt>now</dt><dd>This moment</dd>
+      </dl>
+    </div>
+
+    <div class="cheat-card">
+      <h3>Stats functions</h3>
+      <dl>
+        <dt>count / count(field)</dt><dd>row count</dd>
+        <dt>dc(f)</dt><dd>distinct count</dd>
+        <dt>sum / avg / min / max</dt><dd>numeric math</dd>
+        <dt>median / perc95(f)</dt><dd>statistical</dd>
+        <dt>values(f) / list(f)</dt><dd>collect values</dd>
+        <dt>earliest(f) / latest(f)</dt><dd>first/last by _time</dd>
+        <dt>stdev / var</dt><dd>spread</dd>
+      </dl>
+    </div>
+
+    <div class="cheat-card">
+      <h3>eval functions</h3>
+      <dl>
+        <dt>if(cond,a,b)</dt><dd>ternary</dd>
+        <dt>case(c,v,c,v,…)</dt><dd>multi-branch</dd>
+        <dt>coalesce(a,b,…)</dt><dd>first non-null</dd>
+        <dt>round(n, dp)</dt><dd>rounding</dd>
+        <dt>len / lower / upper</dt><dd>strings</dd>
+        <dt>strftime(epoch, fmt)</dt><dd>format time</dd>
+        <dt>cidrmatch(cidr, ip)</dt><dd>IP-in-subnet test</dd>
+        <dt>like(f, "pat%")</dt><dd>SQL LIKE</dd>
+        <dt>match(f, regex)</dt><dd>regex test</dd>
+      </dl>
+    </div>
+
+    <div class="cheat-card">
+      <h3>Shaping commands</h3>
+      <dl>
+        <dt>fields [+/-] a,b</dt><dd>keep/drop columns</dd>
+        <dt>table a,b,c</dt><dd>display order</dd>
+        <dt>rename a AS b</dt><dd>relabel</dd>
+        <dt>sort [N] [-]f</dt><dd>order results</dd>
+        <dt>head N / tail N</dt><dd>first/last rows</dd>
+        <dt>dedup N f</dt><dd>unique by fields</dd>
+        <dt>reverse</dt><dd>flip order</dd>
+      </dl>
+    </div>
+
+    <div class="cheat-card">
+      <h3>Transforming</h3>
+      <dl>
+        <dt>stats fn(f) BY g</dt><dd>aggregate</dd>
+        <dt>chart fn(f) OVER a BY b</dt><dd>pivot</dd>
+        <dt>timechart span=5m …</dt><dd>time buckets</dd>
+        <dt>top [limit=N] f</dt><dd>most common</dd>
+        <dt>rare [limit=N] f</dt><dd>least common</dd>
+        <dt>bucket _time span=1h</dt><dd>time binning</dd>
+        <dt>tstats …</dt><dd>fast indexed stats</dd>
+      </dl>
+    </div>
+
+    <div class="cheat-card">
+      <h3>Joining data</h3>
+      <dl>
+        <dt>[ search … ]</dt><dd>subsearch filter</dd>
+        <dt>join type=inner|left f</dt><dd>SQL join</dd>
+        <dt>append [ … ]</dt><dd>concat results</dd>
+        <dt>lookup t.csv k OUTPUT v</dt><dd>CSV enrichment</dd>
+        <dt>inputlookup t.csv</dt><dd>CSV as source</dd>
+      </dl>
+    </div>
+
+    <div class="cheat-card">
+      <h3>Extraction</h3>
+      <dl>
+        <dt>rex "pat (?&lt;f&gt;…)"</dt><dd>regex extract</dd>
+        <dt>rex mode=sed "s/x/y/"</dt><dd>replace in place</dd>
+        <dt>extract pairdelim="…"</dt><dd>auto k=v</dd>
+        <dt>spath path=a.b</dt><dd>JSON/XML extract</dd>
+      </dl>
+    </div>
+
+    <div class="cheat-card">
+      <h3>Multi-value fields</h3>
+      <dl>
+        <dt>mvcount(mv)</dt><dd>length</dd>
+        <dt>mvindex(mv, n)</dt><dd>nth value</dd>
+        <dt>mvjoin(mv, ",")</dt><dd>to string</dd>
+        <dt>mvfilter(cond)</dt><dd>filter values</dd>
+        <dt>split(s, ",")</dt><dd>string → mv</dd>
+      </dl>
+    </div>
+
+    <div class="cheat-card">
+      <h3>Common sourcetypes</h3>
+      <dl>
+        <dt>cisco:ios, cisco:nxos</dt><dd>Cisco syslog</dd>
+        <dt>arista:eos</dt><dd>Arista syslog</dd>
+        <dt>cisco:asa, pan:traffic</dt><dd>Firewalls</dd>
+        <dt>linux_secure, WinEventLog:*</dt><dd>OS auth/events</dd>
+        <dt>bro:conn, suricata</dt><dd>IDS/flow</dd>
+      </dl>
+    </div>
+
+    <div class="cheat-card">
+      <h3>Query skeleton</h3>
+      <dl>
+        <dt>Template</dt>
+        <dd style="font-family: var(--mono); color: var(--accent);">index=&lt;x&gt; sourcetype=&lt;y&gt;<br/>earliest=-1h@h<br/>&lt;keywords&gt; &lt;field=value&gt;<br/>| rex "…"<br/>| eval …<br/>| stats fn(f) BY g<br/>| where computed&gt;N<br/>| sort -count<br/>| head 20</dd>
+      </dl>
+    </div>
+
+  </div>
+</div>
+
+<footer>
+  SPL FORGE · single-file portable query builder · drop this HTML anywhere, open in any browser, no deps
+</footer>
+
+</main>
+
+<!-- ========================= MODAL ========================= -->
+<div class="modal-back" id="saveModal">
+  <div class="modal">
+    <h3>◎ Save current search</h3>
+    <div class="field">
+      <label>Name</label>
+      <input type="text" id="saveName" placeholder="e.g. FW blocks by source IP (last hour)" />
+    </div>
+    <div class="field">
+      <label>Description</label>
+      <textarea id="saveDesc" placeholder="What this search does, who it's for, any caveats…"></textarea>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeSaveModal()">Cancel</button>
+      <button class="btn primary" onclick="saveCurrent()">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- ========================= DATALISTS ========================= -->
+<datalist id="dl-common-ips">
+  <option value="10.0.0.0"/>
+  <option value="10.1.0.0"/>
+  <option value="10.10.0.0"/>
+  <option value="10.100.0.0"/>
+  <option value="172.16.0.0"/>
+  <option value="172.20.0.0"/>
+  <option value="172.31.0.0"/>
+  <option value="192.168.0.0"/>
+  <option value="192.168.1.0"/>
+  <option value="192.168.100.0"/>
+  <option value="100.64.0.0"/>
+  <option value="127.0.0.0"/>
+  <option value="127.0.0.1"/>
+  <option value="169.254.0.0"/>
+  <option value="224.0.0.0"/>
+  <option value="0.0.0.0"/>
+  <option value="255.255.255.255"/>
+  <option value="8.8.8.8"/>
+  <option value="8.8.4.4"/>
+  <option value="1.1.1.1"/>
+  <option value="1.0.0.1"/>
+  <option value="9.9.9.9"/>
+  <option value="208.67.222.222"/>
+  <option value="::1"/>
+  <option value="fe80::"/>
+  <option value="fc00::"/>
+  <option value="ff00::"/>
+  <option value="2001:db8::"/>
+</datalist>
+
+<datalist id="dl-common-ports">
+  <option value="22"/>
+  <option value="23"/>
+  <option value="25"/>
+  <option value="53"/>
+  <option value="67"/>
+  <option value="68"/>
+  <option value="80"/>
+  <option value="88"/>
+  <option value="123"/>
+  <option value="135"/>
+  <option value="137"/>
+  <option value="138"/>
+  <option value="139"/>
+  <option value="143"/>
+  <option value="161"/>
+  <option value="162"/>
+  <option value="179"/>
+  <option value="389"/>
+  <option value="443"/>
+  <option value="445"/>
+  <option value="500"/>
+  <option value="514"/>
+  <option value="587"/>
+  <option value="623"/>
+  <option value="636"/>
+  <option value="830"/>
+  <option value="853"/>
+  <option value="993"/>
+  <option value="995"/>
+  <option value="1194"/>
+  <option value="1433"/>
+  <option value="1521"/>
+  <option value="1812"/>
+  <option value="1813"/>
+  <option value="2049"/>
+  <option value="3128"/>
+  <option value="3306"/>
+  <option value="3389"/>
+  <option value="4500"/>
+  <option value="4789"/>
+  <option value="5060"/>
+  <option value="5432"/>
+  <option value="5601"/>
+  <option value="5900"/>
+  <option value="5985"/>
+  <option value="5986"/>
+  <option value="6030"/>
+  <option value="6443"/>
+  <option value="6514"/>
+  <option value="6611"/>
+  <option value="8080"/>
+  <option value="8088"/>
+  <option value="8089"/>
+  <option value="8443"/>
+  <option value="8611"/>
+  <option value="9042"/>
+  <option value="9092"/>
+  <option value="9100"/>
+  <option value="9200"/>
+  <option value="9440"/>
+  <option value="9997"/>
+  <option value="27017"/>
+  <option value="51820"/>
+  <option value="57400"/>
+  <option value="1024-65535"/>
+  <option value="49152-65535"/>
+  <option value="16384-32767"/>
+</datalist>
+
+<datalist id="dl-index">
+  <option value="main"/>
+  <option value="_internal"/>
+  <option value="_audit"/>
+  <option value="_introspection"/>
+  <option value="summary"/>
+  <option value="history"/>
+  <option value="network"/>
+  <option value="net_infra"/>
+  <option value="datacenter"/>
+  <option value="routing"/>
+  <option value="switching"/>
+  <option value="wan"/>
+  <option value="edge"/>
+  <option value="perimeter"/>
+  <option value="firewall"/>
+  <option value="fw_paloalto"/>
+  <option value="fw_fortinet"/>
+  <option value="proxy"/>
+  <option value="dns"/>
+  <option value="dhcp"/>
+  <option value="ipam"/>
+  <option value="ipam_infoblox"/>
+  <option value="ipam_bluecat"/>
+  <option value="vpn"/>
+  <option value="netflow"/>
+  <option value="sflow"/>
+  <option value="telemetry"/>
+  <option value="security"/>
+  <option value="auth"/>
+  <option value="ids"/>
+  <option value="ips"/>
+  <option value="endpoint"/>
+  <option value="edr"/>
+  <option value="threat"/>
+  <option value="vuln"/>
+  <option value="os"/>
+  <option value="linux"/>
+  <option value="windows"/>
+  <option value="server"/>
+  <option value="server_hw"/>
+  <option value="idrac"/>
+  <option value="redfish"/>
+  <option value="storage"/>
+  <option value="storage_powermax"/>
+  <option value="storage_powerflex"/>
+  <option value="san"/>
+  <option value="nas"/>
+  <option value="hci"/>
+  <option value="nutanix"/>
+  <option value="nutanix_prism"/>
+  <option value="nutanix_ahv"/>
+  <option value="virtualization"/>
+  <option value="web"/>
+  <option value="app"/>
+  <option value="cloud"/>
+  <option value="aws"/>
+  <option value="azure"/>
+  <option value="gcp"/>
+  <option value="k8s"/>
+  <option value="container"/>
+  <option value="db"/>
+  <option value="email"/>
+  <option value="cisco"/>
+  <option value="cisco_nxos"/>
+  <option value="cisco_iosxr"/>
+  <option value="cisco_asr"/>
+  <option value="arista"/>
+  <option value="arista_eos"/>
+  <option value="paloalto"/>
+  <option value="fortinet"/>
+  <option value="checkpoint"/>
+  <option value="juniper"/>
+  <option value="f5"/>
+  <option value="dell"/>
+  <option value="dell_poweredge"/>
+  <option value="dell_powerflex"/>
+  <option value="dell_powermax"/>
+  <option value="lab"/>
+  <option value="prod"/>
+  <option value="*"/>
+</datalist>
+
+<datalist id="dl-sourcetype">
+  <optgroup label="Cisco — NX-OS (Nexus 9k/7k/5k/3k)">
+    <option value="cisco:nxos"/>
+    <option value="cisco:nxos:syslog"/>
+    <option value="cisco:nxos:accounting"/>
+    <option value="cisco:nxos:aaa"/>
+    <option value="cisco:nxapi"/>
+    <option value="cisco:nxos:netconf"/>
+    <option value="cisco:nxos:telemetry"/>
+    <option value="cisco:nxos:mds"/>
+    <option value="cisco:aci"/>
+    <option value="cisco:apic"/>
+    <option value="cisco:aci:faults"/>
+    <option value="cisco:aci:events"/>
+    <option value="cisco:aci:audit"/>
+  </optgroup>
+  <optgroup label="Cisco — IOS-XR (ASR 9k, NCS, CRS)">
+    <option value="cisco:iosxr"/>
+    <option value="cisco:iosxr:syslog"/>
+    <option value="cisco:iosxr:netconf"/>
+    <option value="cisco:iosxr:telemetry"/>
+    <option value="cisco:iosxr:mdt"/>
+    <option value="cisco:asr9k"/>
+    <option value="cisco:asr9k:syslog"/>
+    <option value="cisco:xr"/>
+  </optgroup>
+  <optgroup label="Cisco — IOS / IOS-XE (classic)">
+    <option value="cisco:ios"/>
+    <option value="cisco:ios:syslog"/>
+    <option value="cisco:iosxe"/>
+    <option value="cisco:asr1k"/>
+    <option value="cisco:catalyst"/>
+    <option value="cisco:isr"/>
+    <option value="cisco:sdwan"/>
+    <option value="cisco:sdwan:vmanage"/>
+    <option value="cisco:sdwan:syslog"/>
+  </optgroup>
+  <optgroup label="Cisco — security / other">
+    <option value="cisco:asa"/>
+    <option value="cisco:ftd"/>
+    <option value="cisco:firepower"/>
+    <option value="cisco:wsa"/>
+    <option value="cisco:esa"/>
+    <option value="cisco:ise"/>
+    <option value="cisco:ise:syslog"/>
+    <option value="cisco:meraki"/>
+    <option value="cisco:meraki:flows"/>
+    <option value="cisco:ucs"/>
+    <option value="cisco:ucs:fi"/>
+    <option value="cisco:stealthwatch"/>
+    <option value="cisco:amp"/>
+    <option value="cisco:umbrella"/>
+    <option value="cisco:umbrella:dns"/>
+  </optgroup>
+  <optgroup label="Arista EOS / CVP">
+    <option value="arista:eos"/>
+    <option value="arista:eos:syslog"/>
+    <option value="arista:eapi"/>
+    <option value="arista:cvp"/>
+    <option value="arista:cvp:audit"/>
+    <option value="arista:cvp:syslog"/>
+    <option value="arista:openconfig"/>
+    <option value="arista:telemetry"/>
+    <option value="arista:ztp"/>
+  </optgroup>
+  <optgroup label="Juniper / HPE / Aruba">
+    <option value="juniper:junos"/>
+    <option value="juniper:srx"/>
+    <option value="juniper:structured"/>
+    <option value="hp:procurve"/>
+    <option value="hpe:comware"/>
+    <option value="aruba:clearpass"/>
+    <option value="aruba:switch"/>
+    <option value="aruba:wireless"/>
+  </optgroup>
+  <optgroup label="Palo Alto firewalls / Panorama">
+    <option value="pan:traffic"/>
+    <option value="pan:threat"/>
+    <option value="pan:system"/>
+    <option value="pan:config"/>
+    <option value="pan:url"/>
+    <option value="pan:data"/>
+    <option value="pan:wildfire"/>
+    <option value="pan:wildfire_report"/>
+    <option value="pan:globalprotect"/>
+    <option value="pan:hipmatch"/>
+    <option value="pan:correlation"/>
+    <option value="pan:authentication"/>
+    <option value="pan:userid"/>
+    <option value="pan:decryption"/>
+    <option value="pan:gtp"/>
+    <option value="pan:sctp"/>
+    <option value="pan:iptag"/>
+    <option value="pan:log"/>
+    <option value="pan:panorama"/>
+  </optgroup>
+  <optgroup label="Fortinet — FortiGate / FortiAnalyzer / FortiMail">
+    <option value="fortigate_traffic"/>
+    <option value="fortigate_utm"/>
+    <option value="fortigate_event"/>
+    <option value="fgt_traffic"/>
+    <option value="fgt_utm"/>
+    <option value="fgt_event"/>
+    <option value="fortinet:fortigate:traffic"/>
+    <option value="fortinet:fortigate:event"/>
+    <option value="fortinet:fortigate:utm"/>
+    <option value="fortinet:fortigate:virus"/>
+    <option value="fortinet:fortigate:ips"/>
+    <option value="fortinet:fortigate:webfilter"/>
+    <option value="fortinet:fortigate:app-ctrl"/>
+    <option value="fortinet:fortigate:dns"/>
+    <option value="fortinet:fortigate:ssh"/>
+    <option value="fortinet:fortigate:ssl"/>
+    <option value="fortinet:fortigate:vpn"/>
+    <option value="fortinet:fortigate:user"/>
+    <option value="fortinet:fortigate:system"/>
+    <option value="fortinet:fortigate:dhcp"/>
+    <option value="fortinet:fortigate:wireless"/>
+    <option value="fortinet:fortianalyzer"/>
+    <option value="fortinet:fortimanager"/>
+    <option value="fortinet:fortimail"/>
+    <option value="fortinet:fortiweb"/>
+    <option value="fortinet:fortiproxy"/>
+    <option value="fortinet:fortiauthenticator"/>
+  </optgroup>
+  <optgroup label="Other firewalls / security appliances">
+    <option value="checkpoint:syslog"/>
+    <option value="opsec"/>
+    <option value="opsec:audit"/>
+    <option value="sonicwall"/>
+    <option value="sonicwall:firewall"/>
+    <option value="watchguard"/>
+    <option value="sophos:xg"/>
+  </optgroup>
+  <optgroup label="Load balancer / WAF / proxy">
+    <option value="f5:bigip:syslog"/>
+    <option value="f5:bigip:ltm"/>
+    <option value="f5:bigip:asm"/>
+    <option value="f5:bigip:apm"/>
+    <option value="f5:bigip:gtm"/>
+    <option value="citrix:netscaler:syslog"/>
+    <option value="nginx:plus:access"/>
+    <option value="haproxy"/>
+    <option value="squid:access"/>
+    <option value="bluecoat:proxysg:access"/>
+    <option value="zscaler"/>
+    <option value="zscaler:zia:weblog"/>
+    <option value="zscaler:zpa:applog"/>
+  </optgroup>
+  <optgroup label="IDS / IPS / NDR">
+    <option value="suricata"/>
+    <option value="snort"/>
+    <option value="bro:conn"/>
+    <option value="bro:dns"/>
+    <option value="bro:http"/>
+    <option value="bro:ssl"/>
+    <option value="bro:x509"/>
+    <option value="bro:files"/>
+    <option value="zeek:conn"/>
+    <option value="zeek:dns"/>
+    <option value="zeek:http"/>
+    <option value="zeek:notice"/>
+    <option value="darktrace"/>
+  </optgroup>
+  <optgroup label="Windows">
+    <option value="WinEventLog:Security"/>
+    <option value="WinEventLog:System"/>
+    <option value="WinEventLog:Application"/>
+    <option value="WinEventLog:Setup"/>
+    <option value="WinEventLog:ForwardedEvents"/>
+    <option value="XmlWinEventLog:Security"/>
+    <option value="XmlWinEventLog:Microsoft-Windows-Sysmon/Operational"/>
+    <option value="XmlWinEventLog:Microsoft-Windows-PowerShell/Operational"/>
+    <option value="MSAD:NT6:DNS"/>
+    <option value="PowerShell"/>
+    <option value="WMI:CPUTime"/>
+    <option value="Script:ListeningPorts"/>
+    <option value="Perfmon:CPU"/>
+    <option value="Perfmon:Memory"/>
+    <option value="Perfmon:Network"/>
+    <option value="Perfmon:Disk"/>
+  </optgroup>
+  <optgroup label="Linux / Unix">
+    <option value="linux_secure"/>
+    <option value="linux_messages_syslog"/>
+    <option value="linux_audit"/>
+    <option value="syslog"/>
+    <option value="auditd"/>
+    <option value="journald"/>
+    <option value="systemd"/>
+    <option value="bash_history"/>
+    <option value="linux:lastlog"/>
+    <option value="linux:who"/>
+    <option value="linux:dmesg"/>
+    <option value="cpu"/>
+    <option value="df"/>
+    <option value="iostat"/>
+    <option value="netstat"/>
+    <option value="ps"/>
+    <option value="top"/>
+    <option value="vmstat"/>
+    <option value="sar"/>
+    <option value="sshd"/>
+    <option value="sudo"/>
+  </optgroup>
+  <optgroup label="Web servers">
+    <option value="access_combined"/>
+    <option value="access_combined_wcookie"/>
+    <option value="access_common"/>
+    <option value="iis"/>
+    <option value="ms:iis:default"/>
+    <option value="apache:error"/>
+    <option value="nginx:access"/>
+    <option value="nginx:error"/>
+    <option value="tomcat:access"/>
+  </optgroup>
+  <optgroup label="DNS / DHCP / IPAM — Infoblox">
+    <option value="infoblox:dns"/>
+    <option value="infoblox:dhcp"/>
+    <option value="infoblox:audit"/>
+    <option value="infoblox:syslog"/>
+    <option value="infoblox:threatprotect"/>
+    <option value="infoblox:dnsquery"/>
+    <option value="infoblox:dnsresponse"/>
+    <option value="infoblox:dhcpd"/>
+    <option value="infoblox:messages"/>
+    <option value="infoblox:grid"/>
+    <option value="infoblox:rpz"/>
+    <option value="ib:dns"/>
+    <option value="ib:dhcp"/>
+    <option value="ib:syslog"/>
+  </optgroup>
+  <optgroup label="DNS / DHCP / IPAM — BlueCat">
+    <option value="bluecat:dns"/>
+    <option value="bluecat:dhcp"/>
+    <option value="bluecat:syslog"/>
+    <option value="bluecat:audit"/>
+    <option value="bluecat:bam"/>
+    <option value="bluecat:bdds"/>
+    <option value="bluecat:dnsquery"/>
+    <option value="bluecat:dnsresponse"/>
+    <option value="bluecat:messages"/>
+  </optgroup>
+  <optgroup label="DNS / DHCP — generic / OS-native">
+    <option value="bind"/>
+    <option value="named"/>
+    <option value="microsoft:dns:debug"/>
+    <option value="microsoft:dns:analytical"/>
+    <option value="microsoft:dhcp"/>
+    <option value="isc:dhcp"/>
+    <option value="dhcpd"/>
+  </optgroup>
+  <optgroup label="Nutanix — AOS / AHV / Prism">
+    <option value="nutanix:audit"/>
+    <option value="nutanix:api"/>
+    <option value="nutanix:syslog"/>
+    <option value="nutanix:prism"/>
+    <option value="nutanix:prism_central"/>
+    <option value="nutanix:prism_element"/>
+    <option value="nutanix:alerts"/>
+    <option value="nutanix:events"/>
+    <option value="nutanix:genesis"/>
+    <option value="nutanix:aos"/>
+    <option value="nutanix:ahv"/>
+    <option value="nutanix:cvm"/>
+    <option value="nutanix:cvm:stargate"/>
+    <option value="nutanix:cvm:cassandra"/>
+    <option value="nutanix:cvm:curator"/>
+    <option value="nutanix:cvm:zeus"/>
+    <option value="nutanix:files"/>
+    <option value="nutanix:objects"/>
+    <option value="nutanix:era"/>
+    <option value="nutanix:flow"/>
+    <option value="nutanix:move"/>
+  </optgroup>
+  <optgroup label="Dell PowerEdge / iDRAC / OME">
+    <option value="dell:idrac"/>
+    <option value="dell:idrac:syslog"/>
+    <option value="dell:idrac:lifecycle"/>
+    <option value="dell:idrac:sel"/>
+    <option value="dell:idrac:lcl"/>
+    <option value="dell:omsa"/>
+    <option value="dell:openmanage"/>
+    <option value="dell:ome"/>
+    <option value="dell:ome:enterprise"/>
+    <option value="dell:lifecyclecontroller"/>
+    <option value="dell:racadm"/>
+    <option value="dell:poweredge:syslog"/>
+    <option value="dell:srvadmin"/>
+    <option value="ipmi:sel"/>
+    <option value="ipmi:sensor"/>
+    <option value="redfish"/>
+    <option value="redfish:events"/>
+  </optgroup>
+  <optgroup label="Dell PowerFlex (ScaleIO / VxFlex)">
+    <option value="dell:powerflex"/>
+    <option value="dell:powerflex:manager"/>
+    <option value="dell:powerflex:mdm"/>
+    <option value="dell:powerflex:sds"/>
+    <option value="dell:powerflex:sdc"/>
+    <option value="dell:powerflex:gateway"/>
+    <option value="dell:powerflex:syslog"/>
+    <option value="dell:scaleio"/>
+    <option value="dell:scaleio:mdm"/>
+    <option value="dell:vxflex"/>
+    <option value="dell:vxflex:manager"/>
+  </optgroup>
+  <optgroup label="Dell PowerMax (VMAX / Symmetrix)">
+    <option value="dell:powermax"/>
+    <option value="dell:powermax:audit"/>
+    <option value="dell:powermax:syslog"/>
+    <option value="dell:powermax:alerts"/>
+    <option value="dell:unisphere"/>
+    <option value="dell:unisphere:audit"/>
+    <option value="dell:symmetrix"/>
+    <option value="dell:solutions-enabler"/>
+    <option value="emc:symapi"/>
+    <option value="emc:vmax"/>
+    <option value="emc:symmetrix"/>
+  </optgroup>
+  <optgroup label="Dell — other storage / networking">
+    <option value="dell:isilon"/>
+    <option value="dell:ecs"/>
+    <option value="dell:data_domain"/>
+    <option value="dell:networker"/>
+    <option value="dell:os10"/>
+    <option value="dell:ftos"/>
+  </optgroup>
+  <optgroup label="Cloud — AWS">
+    <option value="aws:cloudtrail"/>
+    <option value="aws:cloudwatchlogs"/>
+    <option value="aws:cloudwatchlogs:vpcflow"/>
+    <option value="aws:s3:accesslogs"/>
+    <option value="aws:config:rule"/>
+    <option value="aws:config"/>
+    <option value="aws:description"/>
+    <option value="aws:elb:accesslogs"/>
+    <option value="aws:cloudfront:accesslogs"/>
+    <option value="aws:guardduty"/>
+    <option value="aws:securityhub:finding"/>
+    <option value="aws:waf"/>
+  </optgroup>
+  <optgroup label="Cloud — Azure / GCP / O365">
+    <option value="azure:activity"/>
+    <option value="azure:audit"/>
+    <option value="azure:signin"/>
+    <option value="azure:resource"/>
+    <option value="azure:nsg:flow"/>
+    <option value="mscs:azure:eventhub"/>
+    <option value="gcp:audit"/>
+    <option value="gcp:pubsub:message"/>
+    <option value="google:gcp:pubsub:message"/>
+    <option value="o365:management:activity"/>
+    <option value="o365:service:status"/>
+    <option value="o365:service:healthIssue"/>
+    <option value="gsuite:drive"/>
+    <option value="gsuite:login"/>
+  </optgroup>
+  <optgroup label="Email / identity">
+    <option value="ms:exchange:mt:common"/>
+    <option value="ms:exchange:mt:messagetracking"/>
+    <option value="postfix"/>
+    <option value="sendmail"/>
+    <option value="proofpoint"/>
+    <option value="mimecast"/>
+    <option value="okta:im"/>
+    <option value="okta:im2"/>
+    <option value="duo:authentication"/>
+    <option value="pingfederate"/>
+  </optgroup>
+  <optgroup label="Databases">
+    <option value="mssql:errorlog"/>
+    <option value="mssql:audit"/>
+    <option value="mysql:error"/>
+    <option value="mysqld:general_log"/>
+    <option value="postgres:log"/>
+    <option value="oracle:audit:text"/>
+    <option value="mongodb:log"/>
+  </optgroup>
+  <optgroup label="Hypervisor / container">
+    <option value="vmware:vclog"/>
+    <option value="vmware:esxlog"/>
+    <option value="vmware:vclog:vpxd"/>
+    <option value="vmware:nsx"/>
+    <option value="vmware:vcenter:events"/>
+    <option value="kube:container:events"/>
+    <option value="kube:objects"/>
+    <option value="kube:container:controller"/>
+    <option value="docker:container:logs"/>
+    <option value="docker:daemon"/>
+  </optgroup>
+  <optgroup label="Streaming telemetry / model-driven">
+    <option value="openconfig"/>
+    <option value="openconfig:interfaces"/>
+    <option value="openconfig:bgp"/>
+    <option value="gnmi"/>
+    <option value="gnmi:subscribe"/>
+    <option value="grpc:telemetry"/>
+    <option value="netconf"/>
+    <option value="yang-push"/>
+  </optgroup>
+  <optgroup label="Generic">
+    <option value="syslog"/>
+    <option value="tcp:514"/>
+    <option value="udp:514"/>
+    <option value="tcp:6514"/>
+    <option value="json"/>
+    <option value="_json"/>
+    <option value="csv"/>
+    <option value="cef"/>
+    <option value="leef"/>
+    <option value="catchall"/>
+    <option value="generic_single_line"/>
+  </optgroup>
+</datalist>
+
+<datalist id="dl-source">
+  <optgroup label="Linux logs">
+    <option value="/var/log/messages"/>
+    <option value="/var/log/secure"/>
+    <option value="/var/log/auth.log"/>
+    <option value="/var/log/syslog"/>
+    <option value="/var/log/kern.log"/>
+    <option value="/var/log/cron"/>
+    <option value="/var/log/maillog"/>
+    <option value="/var/log/boot.log"/>
+    <option value="/var/log/yum.log"/>
+    <option value="/var/log/dnf.log"/>
+    <option value="/var/log/dpkg.log"/>
+    <option value="/var/log/audit/audit.log"/>
+    <option value="/var/log/wtmp"/>
+    <option value="/var/log/btmp"/>
+    <option value="/var/log/journal"/>
+    <option value="journald"/>
+  </optgroup>
+  <optgroup label="Web servers">
+    <option value="/var/log/nginx/access.log"/>
+    <option value="/var/log/nginx/error.log"/>
+    <option value="/var/log/apache2/access.log"/>
+    <option value="/var/log/apache2/error.log"/>
+    <option value="/var/log/httpd/access_log"/>
+    <option value="/var/log/httpd/error_log"/>
+    <option value="C:\inetpub\logs\LogFiles\W3SVC1"/>
+  </optgroup>
+  <optgroup label="Syslog receivers — standard">
+    <option value="udp:514"/>
+    <option value="tcp:514"/>
+    <option value="tcp:6514"/>
+    <option value="udp:162"/>
+    <option value="http:splunk_hec"/>
+    <option value="http:raw"/>
+  </optgroup>
+  <optgroup label="Syslog receivers — platform-specific (common patterns)">
+    <option value="udp:5140"/>
+    <option value="udp:5141"/>
+    <option value="udp:5142"/>
+    <option value="udp:5143"/>
+    <option value="udp:5144"/>
+    <option value="udp:5145"/>
+    <option value="udp:5146"/>
+    <option value="tcp:5140"/>
+    <option value="tcp:5141"/>
+    <option value="tcp:5142"/>
+    <option value="udp:1514"/>
+    <option value="tcp:1514"/>
+    <option value="udp:10514"/>
+    <option value="tcp:10514"/>
+  </optgroup>
+  <optgroup label="Nutanix log paths">
+    <option value="/home/nutanix/data/logs/genesis.out"/>
+    <option value="/home/nutanix/data/logs/stargate.INFO"/>
+    <option value="/home/nutanix/data/logs/cassandra.out"/>
+    <option value="/home/nutanix/data/logs/curator.INFO"/>
+    <option value="/home/nutanix/data/logs/prism_gateway.log"/>
+    <option value="/home/nutanix/data/logs/prism_monitor.INFO"/>
+    <option value="/home/nutanix/data/logs/zookeeper.out"/>
+    <option value="/home/nutanix/data/logs/aplos.out"/>
+    <option value="/home/nutanix/data/logs/sysstats/"/>
+    <option value="/var/log/libvirt/qemu/"/>
+  </optgroup>
+  <optgroup label="Dell iDRAC / OME log paths">
+    <option value="/var/log/idrac/"/>
+    <option value="/var/log/dell/"/>
+    <option value="/opt/dell/srvadmin/var/log/"/>
+    <option value="/var/log/syslog-dell-omsa"/>
+    <option value="C:\ProgramData\Dell\SysMgt\omsa\log"/>
+  </optgroup>
+  <optgroup label="Dell PowerFlex / PowerMax log paths">
+    <option value="/opt/emc/scaleio/mdm/logs/"/>
+    <option value="/opt/emc/scaleio/sds/logs/"/>
+    <option value="/opt/emc/scaleio/sdc/logs/"/>
+    <option value="/opt/emc/scaleio/gateway/logs/"/>
+    <option value="/var/log/scaleio/"/>
+    <option value="/var/log/VMware/"/>
+    <option value="/opt/dellemc/unisphere/logs/"/>
+    <option value="/opt/emc/symapi/log/"/>
+    <option value="/var/symapi/log/"/>
+  </optgroup>
+  <optgroup label="Infoblox / BlueCat log paths">
+    <option value="/var/log/named.log"/>
+    <option value="/var/log/dhcpd.log"/>
+    <option value="/var/log/bluecat/"/>
+    <option value="/var/log/named/query.log"/>
+    <option value="/var/log/named/rpz.log"/>
+  </optgroup>
+  <optgroup label="Windows">
+    <option value="WinEventLog:Security"/>
+    <option value="WinEventLog:System"/>
+    <option value="WinEventLog:Application"/>
+    <option value="WinRegistry"/>
+    <option value="WMI"/>
+    <option value="PerfmonMk"/>
+  </optgroup>
+  <optgroup label="Databases / apps">
+    <option value="/var/log/mysql/error.log"/>
+    <option value="/var/log/postgresql/postgresql.log"/>
+    <option value="/var/log/mongodb/mongod.log"/>
+    <option value="/var/log/elasticsearch/elasticsearch.log"/>
+  </optgroup>
+  <optgroup label="Container / cloud">
+    <option value="/var/log/containers/*.log"/>
+    <option value="/var/lib/docker/containers/*/*.log"/>
+    <option value="stdin"/>
+    <option value="stdout"/>
+  </optgroup>
+  <optgroup label="Streaming telemetry / gRPC">
+    <option value="tcp:57400"/>
+    <option value="tcp:6030"/>
+    <option value="tcp:6040"/>
+    <option value="tcp:9339"/>
+    <option value="tcp:50051"/>
+  </optgroup>
+</datalist>
+
+<datalist id="dl-host">
+  <option value="*"/>
+  <option value="*.lab.local"/>
+  <option value="*.corp.local"/>
+
+  <option value="leaf-*"/>
+  <option value="spine-*"/>
+  <option value="border-*"/>
+  <option value="core-*"/>
+  <option value="dist-*"/>
+  <option value="agg-*"/>
+  <option value="tor-*"/>
+
+  <option value="n9k-*"/>
+  <option value="nx9k-*"/>
+  <option value="nexus-*"/>
+  <option value="nx-*"/>
+
+  <option value="arista-*"/>
+  <option value="eos-*"/>
+  <option value="ar-*"/>
+
+  <option value="asr-*"/>
+  <option value="asr9k-*"/>
+  <option value="xr-*"/>
+  <option value="pe-*"/>
+  <option value="p-*"/>
+  <option value="ce-*"/>
+  <option value="rr-*"/>
+
+  <option value="fw-*"/>
+  <option value="pan-*"/>
+  <option value="pa-*"/>
+  <option value="palo-*"/>
+  <option value="fgt-*"/>
+  <option value="forti-*"/>
+  <option value="fortigate-*"/>
+
+  <option value="ib-*"/>
+  <option value="infoblox-*"/>
+  <option value="grid-*"/>
+  <option value="bam-*"/>
+  <option value="bdds-*"/>
+  <option value="bluecat-*"/>
+
+  <option value="cvm-*"/>
+  <option value="ahv-*"/>
+  <option value="ntnx-*"/>
+  <option value="nutanix-*"/>
+  <option value="prism-*"/>
+  <option value="pc-*"/>
+
+  <option value="pe-esx-*"/>
+  <option value="poweredge-*"/>
+  <option value="idrac-*"/>
+  <option value="drac-*"/>
+
+  <option value="pflex-*"/>
+  <option value="powerflex-*"/>
+  <option value="vxflex-*"/>
+  <option value="scaleio-*"/>
+  <option value="mdm-*"/>
+  <option value="sds-*"/>
+
+  <option value="pmax-*"/>
+  <option value="powermax-*"/>
+  <option value="vmax-*"/>
+  <option value="symm-*"/>
+  <option value="unisphere-*"/>
+
+  <option value="dc-*"/>
+  <option value="ad-*"/>
+  <option value="rtr-*"/>
+  <option value="sw-*"/>
+  <option value="ap-*"/>
+  <option value="wlc-*"/>
+  <option value="lb-*"/>
+  <option value="vpn-*"/>
+</datalist>
+
+<div class="copied-toast" id="toast">Copied to clipboard</div>
+
+<script>
+/* ================= Tab switching ================= */
+document.getElementById('tabs').addEventListener('click', e => {
+  if (e.target.tagName !== 'BUTTON') return;
+  const tab = e.target.dataset.tab;
+  document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+  document.querySelectorAll('.pane').forEach(p => p.classList.toggle('active', p.id === 'pane-' + tab));
+});
+
+/* ================= Filter rows ================= */
+const filtersEl = document.getElementById('filters');
+const OPS = ['=','!=','>','>=','<','<=','IN'];
+
+function addFilter(field='', op='=', value='') {
+  const row = document.createElement('div');
+  row.className = 'filter-row';
+  row.innerHTML = `
+    <input type="text" placeholder="field (e.g. status)" value="${escapeAttr(field)}" oninput="buildQuery()"/>
+    <select onchange="buildQuery()">${OPS.map(o => `<option ${o===op?'selected':''}>${o}</option>`).join('')}</select>
+    <input type="text" placeholder="value" value="${escapeAttr(value)}" oninput="buildQuery()"/>
+    <button class="icon-btn" onclick="this.parentNode.remove();buildQuery()">×</button>
+  `;
+  filtersEl.appendChild(row);
+  buildQuery();
+}
+
+/* ================= Stats rows ================= */
+const statsEl = document.getElementById('stats-rows');
+const FNS = ['count','dc','sum','avg','min','max','median','perc95','stdev','values','list','first','last','earliest','latest'];
+
+function addStatsRow(fn='count', field='', alias='') {
+  const row = document.createElement('div');
+  row.className = 'stats-row';
+  row.innerHTML = `
+    <select onchange="buildQuery()">${FNS.map(f => `<option ${f===fn?'selected':''}>${f}</option>`).join('')}</select>
+    <input type="text" placeholder='field (blank ok for count)' value="${escapeAttr(field)}" oninput="buildQuery()"/>
+    <input type="text" placeholder="alias (optional)" value="${escapeAttr(alias)}" oninput="buildQuery()"/>
+    <button class="icon-btn" onclick="this.parentNode.remove();buildQuery()">×</button>
+  `;
+  statsEl.appendChild(row);
+  buildQuery();
+}
+
+/* ================= Eval rows ================= */
+const evalsEl = document.getElementById('evals');
+
+function addEval(name='', expr='') {
+  const row = document.createElement('div');
+  row.className = 'eval-row';
+  row.innerHTML = `
+    <input type="text" placeholder="new field name" value="${escapeAttr(name)}" oninput="buildQuery()"/>
+    <input type="text" placeholder='expression e.g. if(status>=400,"err","ok")' value="${escapeAttr(expr)}" oninput="buildQuery()"/>
+    <button class="icon-btn" onclick="this.parentNode.remove();buildQuery()">×</button>
+  `;
+  evalsEl.appendChild(row);
+  buildQuery();
+}
+
+/* ================= Rex rows ================= */
+const rexesEl = document.getElementById('rexes');
+
+function addRex(field='_raw', pattern='') {
+  const row = document.createElement('div');
+  row.className = 'rex-row';
+  row.innerHTML = `
+    <input type="text" placeholder="source field" value="${escapeAttr(field)}" oninput="buildQuery()"/>
+    <input type="text" placeholder='pattern with (?&lt;name&gt;...)' value="${escapeAttr(pattern)}" oninput="buildQuery()"/>
+    <button class="icon-btn" onclick="this.parentNode.remove();buildQuery()">×</button>
+  `;
+  rexesEl.appendChild(row);
+  buildQuery();
+}
+
+function escapeAttr(s) { return String(s ?? '').replace(/"/g,'&quot;'); }
+
+/* ================= Dynamic transform UI ================= */
+function updateTransformUI() {
+  const cmd = document.getElementById('transform-cmd').value;
+  document.getElementById('timechart-span-wrap').style.display = (cmd === 'timechart') ? '' : 'none';
+  document.getElementById('top-limit-wrap').style.display = (['top','rare'].includes(cmd)) ? '' : 'none';
+  document.getElementById('stats-wrap').style.display = (['stats','chart','timechart'].includes(cmd)) ? '' : 'none';
+  document.getElementById('groupby-wrap').style.display = cmd ? '' : 'none';
+  buildQuery();
+}
+
+/* ================= Helpers ================= */
+function needsQuotes(v) {
+  if (v === '' || v == null) return false;
+  if (/^\d+(\.\d+)?$/.test(v)) return false;          // numeric
+  if (/^[A-Za-z0-9_.\-*:\/]+$/.test(v)) return false; // safe chars + wildcards
+  return true;
+}
+function quote(v) { return needsQuotes(v) ? `"${v.replace(/"/g,'\\"')}"` : v; }
+
+/* ================= Build the query ================= */
+function buildQuery() {
+  const parts = [];
+  const segments = [];
+
+  // Time
+  const earliestSel = document.getElementById('earliest').value;
+  const latestSel = document.getElementById('latest').value;
+  const customT = document.getElementById('customTime').value.trim();
+  const earliest = earliestSel === 'custom' ? customT : earliestSel;
+  const latest = latestSel === 'custom' ? customT : latestSel;
+  if (earliest) parts.push(`earliest=${earliest}`);
+  if (latest)   parts.push(`latest=${latest}`);
+
+  // Source selectors
+  for (const k of ['index','sourcetype','source','host']) {
+    const v = document.getElementById('f-'+k).value.trim();
+    if (v) parts.push(`${k}=${quote(v)}`);
+  }
+
+  // Keywords
+  const terms = document.getElementById('f-terms').value.trim();
+  if (terms) parts.push(terms);
+
+  // Field filters
+  for (const r of filtersEl.children) {
+    const [fEl, opEl, vEl] = r.children;
+    const f = fEl.value.trim(), op = opEl.value, v = vEl.value.trim();
+    if (!f || !v) continue;
+    if (op === 'IN') {
+      // Value interpreted as comma-separated list
+      const items = v.split(',').map(x => quote(x.trim())).join(', ');
+      parts.push(`${f} IN (${items})`);
+    } else {
+      parts.push(`${f}${op}${quote(v)}`);
+    }
+  }
+
+  segments.push(parts.join(' '));
+
+  // Rex
+  for (const r of rexesEl.children) {
+    const [fEl, pEl] = r.children;
+    const field = fEl.value.trim() || '_raw';
+    const pat = pEl.value.trim();
+    if (!pat) continue;
+    segments.push(`rex field=${field} "${pat.replace(/"/g,'\\"')}"`);
+  }
+
+  // Eval
+  for (const r of evalsEl.children) {
+    const [nEl, eEl] = r.children;
+    const name = nEl.value.trim(), expr = eEl.value.trim();
+    if (!name || !expr) continue;
+    segments.push(`eval ${name}=${expr}`);
+  }
+
+  // Transforming
+  const tcmd = document.getElementById('transform-cmd').value;
+  const gby = document.getElementById('f-groupby').value.trim();
+  if (tcmd === 'stats' || tcmd === 'chart' || tcmd === 'timechart') {
+    const aggParts = [];
+    for (const r of statsEl.children) {
+      const [fnEl, fEl, aEl] = r.children;
+      const fn = fnEl.value, field = fEl.value.trim(), alias = aEl.value.trim();
+      let agg = fn === 'count' && !field ? 'count' : `${fn}(${field || '*'})`;
+      if (alias) agg += ` AS ${needsQuotes(alias) ? `"${alias}"` : alias}`;
+      aggParts.push(agg);
+    }
+    if (aggParts.length === 0) aggParts.push('count');
+    let seg = `${tcmd} `;
+    if (tcmd === 'timechart') {
+      const span = document.getElementById('timechart-span').value;
+      if (span) seg += `span=${span} `;
+    }
+    seg += aggParts.join(', ');
+    if (gby) {
+      const cols = gby.split(',').map(x => x.trim()).filter(Boolean).join(', ');
+      if (tcmd === 'chart') {
+        // chart uses OVER x BY y; we'll use BY for simplicity here
+        seg += ` by ${cols}`;
+      } else {
+        seg += ` by ${cols}`;
+      }
+    }
+    segments.push(seg);
+  } else if (tcmd === 'top' || tcmd === 'rare') {
+    const limit = document.getElementById('top-limit').value.trim();
+    let seg = tcmd;
+    if (limit) seg += ` limit=${limit}`;
+    if (gby) seg += ' ' + gby.split(',').map(x => x.trim()).filter(Boolean).join(' ');
+    segments.push(seg);
+  }
+
+  // Where
+  const whereV = document.getElementById('f-where').value.trim();
+  if (whereV) segments.push(`where ${whereV}`);
+
+  // Output shaping
+  const dedup = document.getElementById('f-dedup').value.trim();
+  if (dedup) segments.push(`dedup ${dedup}`);
+
+  const renameV = document.getElementById('f-rename').value.trim();
+  if (renameV) segments.push(`rename ${renameV}`);
+
+  const tbl = document.getElementById('f-table').value.trim();
+  if (tbl) segments.push(`table ${tbl}`);
+
+  const sort = document.getElementById('f-sort').value.trim();
+  if (sort) segments.push(`sort ${sort}`);
+
+  const head = document.getElementById('f-head').value.trim();
+  if (head) segments.push(`head ${head}`);
+
+  // Raw append
+  let raw = document.getElementById('f-raw').value.trim();
+  if (raw) {
+    // strip leading | if the user already included it
+    raw = raw.replace(/^\s*\|\s*/, '');
+    // user may have provided multiple piped segments
+    raw.split(/\n?\s*\|\s*/).filter(Boolean).forEach(s => segments.push(s));
+  }
+
+  // Assemble
+  const pretty = document.getElementById('f-pretty').checked;
+  const filtered = segments.filter(s => s && s.trim() !== '');
+  const glue = pretty ? '\n| ' : ' | ';
+  const query = filtered.length ? filtered.join(glue) : '';
+
+  const out = document.getElementById('output');
+  if (!query) {
+    out.innerHTML = `<span class="placeholder">// Start filling in fields on the left — your query will build here.</span>`;
+  } else {
+    out.textContent = query;
+  }
+  document.getElementById('charCount').textContent = `${query.length} chars`;
+  updateSummary(filtered);
+}
+
+function updateSummary(segments) {
+  if (!segments.length) {
+    document.getElementById('pipelineSummary').textContent = 'No pipeline yet.';
+    return;
+  }
+  const lines = segments.map((s, i) => {
+    const firstWord = s.trim().split(/\s+/)[0];
+    const stage = i === 0 ? 'retrieve' : firstWord;
+    return `${String(i+1).padStart(2,'0')}. ${stage}`;
+  });
+  document.getElementById('pipelineSummary').innerHTML = lines.join('<br/>');
+}
+
+/* ================= Copy / Clear / Examples ================= */
+function copyQuery() {
+  const txt = document.getElementById('output').innerText;
+  if (!txt || txt.startsWith('//')) return;
+  navigator.clipboard.writeText(txt).then(showToast);
+}
+function showToast(msg = 'Copied to clipboard') {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 1400);
+}
+
+function clearAll() {
+  document.querySelectorAll('input[type="text"], input[type="number"], textarea').forEach(el => el.value = '');
+  document.querySelectorAll('select').forEach(el => el.selectedIndex = 0);
+  filtersEl.innerHTML = '';
+  statsEl.innerHTML = '';
+  evalsEl.innerHTML = '';
+  rexesEl.innerHTML = '';
+  document.getElementById('f-pretty').checked = true;
+  updateTransformUI();
+  buildQuery();
+}
+
+const EXAMPLES = {};
+function loadExample(name) { /* legacy no-op */ }
+
+/* =========================================================
+   QUICK NETWORK FILTERS — type IP/port, pick mask/op, add
+   ========================================================= */
+function populateMaskOptions() {
+  const makeGroup = (label, masks) => {
+    const og = document.createElement('optgroup');
+    og.label = label;
+    masks.forEach(m => {
+      const o = document.createElement('option');
+      o.value = m.v; o.textContent = m.t;
+      og.appendChild(o);
+    });
+    return og;
+  };
+  const v4 = [
+    {v:'',    t:'host (no CIDR)'},
+    {v:'/32', t:'/32 — host'},
+    {v:'/31', t:'/31 — p2p'},
+    {v:'/30', t:'/30 — p2p'},
+    {v:'/29', t:'/29'},
+    {v:'/28', t:'/28'},
+    {v:'/27', t:'/27'},
+    {v:'/26', t:'/26'},
+    {v:'/25', t:'/25'},
+    {v:'/24', t:'/24'},
+    {v:'/23', t:'/23'},
+    {v:'/22', t:'/22'},
+    {v:'/21', t:'/21'},
+    {v:'/20', t:'/20'},
+    {v:'/19', t:'/19'},
+    {v:'/18', t:'/18'},
+    {v:'/17', t:'/17'},
+    {v:'/16', t:'/16'},
+    {v:'/15', t:'/15'},
+    {v:'/14', t:'/14'},
+    {v:'/13', t:'/13'},
+    {v:'/12', t:'/12'},
+    {v:'/11', t:'/11'},
+    {v:'/10', t:'/10'},
+    {v:'/9',  t:'/9'},
+    {v:'/8',  t:'/8'}
+  ];
+  const v6 = [
+    {v:'/128', t:'/128 — host'},
+    {v:'/127', t:'/127 — p2p'},
+    {v:'/120', t:'/120'},
+    {v:'/112', t:'/112'},
+    {v:'/96',  t:'/96'},
+    {v:'/80',  t:'/80'},
+    {v:'/64',  t:'/64 — LAN'},
+    {v:'/56',  t:'/56'},
+    {v:'/48',  t:'/48 — site'},
+    {v:'/40',  t:'/40'},
+    {v:'/32',  t:'/32 — ISP alloc'},
+    {v:'/16',  t:'/16'},
+    {v:'/8',   t:'/8'}
+  ];
+  ['qip-src-mask', 'qip-dst-mask'].forEach(id => {
+    const sel = document.getElementById(id);
+    if (!sel) return;
+    // default "host" option at top level (the actual option w/ empty value)
+    const host = document.createElement('option');
+    host.value = ''; host.textContent = 'host (no CIDR)';
+    sel.appendChild(host);
+    sel.appendChild(makeGroup('IPv4', v4.slice(1))); // skip the first which is duplicated
+    sel.appendChild(makeGroup('IPv6', v6));
+  });
+}
+
+function quickAddIp(field, prefix) {
+  const vEl = document.getElementById(prefix);
+  const mEl = document.getElementById(prefix + '-mask');
+  const oEl = document.getElementById(prefix + '-op');
+  const v = vEl.value.trim();
+  if (!v) { showToast('Enter an IP first'); vEl.focus(); return; }
+  const mask = mEl.value;
+  const op = oEl.value;
+  // If user typed a CIDR already (e.g. 10.0.0.0/8), don't double up
+  const hasCidr = /\//.test(v);
+  const value = (!hasCidr && mask) ? (v + mask) : v;
+  addFilter(field, op, value);
+  vEl.value = '';
+  vEl.focus();
+}
+
+function quickAddPort(field, prefix) {
+  const vEl = document.getElementById(prefix);
+  const oEl = document.getElementById(prefix + '-op');
+  const v = vEl.value.trim();
+  if (!v) { showToast('Enter a port first'); vEl.focus(); return; }
+  const op = oEl.value;
+  // Range syntax like 1024-65535 — only sensible with "="; expand to >=/<=.
+  if (/^\d+-\d+$/.test(v)) {
+    if (op !== '=') {
+      showToast('Ranges need =; for ≠ add two filters manually');
+      return;
+    }
+    const [lo, hi] = v.split('-');
+    if (+lo > +hi) { showToast('Range: low must be ≤ high'); return; }
+    addFilter(field, '>=', lo);
+    addFilter(field, '<=', hi);
+  } else if (!/^\d+$/.test(v)) {
+    showToast('Port must be a number or low-high range');
+    return;
+  } else {
+    addFilter(field, op, v);
+  }
+  vEl.value = '';
+  vEl.focus();
+}
+
+/* =========================================================
+   SAVED SEARCHES — localStorage persistence + JSON export/import
+   ========================================================= */
+const STORAGE_KEY = 'splforge.saved.v1';
+
+function readStore() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch (e) { console.warn('Saved-search store unreadable:', e); return []; }
+}
+function writeStore(list) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
+  } catch (e) {
+    showToast('⚠ Could not persist (storage blocked)');
+    console.warn(e);
+  }
+}
+
+function captureState() {
+  const scalarIds = ['earliest','latest','customTime','f-index','f-sourcetype','f-source','f-host',
+    'f-terms','transform-cmd','timechart-span','top-limit','f-groupby',
+    'f-where','f-dedup','f-rename','f-table','f-sort','f-head','f-raw'];
+  const state = { scalar: {}, filters: [], stats: [], evals: [], rexes: [], pretty: true };
+  scalarIds.forEach(id => { const el = document.getElementById(id); if (el) state.scalar[id] = el.value; });
+  state.pretty = document.getElementById('f-pretty').checked;
+  for (const r of filtersEl.children) {
+    const [fEl, opEl, vEl] = r.children;
+    state.filters.push({ field: fEl.value, op: opEl.value, value: vEl.value });
+  }
+  for (const r of statsEl.children) {
+    const [fnEl, fEl, aEl] = r.children;
+    state.stats.push({ fn: fnEl.value, field: fEl.value, alias: aEl.value });
+  }
+  for (const r of evalsEl.children) {
+    const [nEl, eEl] = r.children;
+    state.evals.push({ name: nEl.value, expr: eEl.value });
+  }
+  for (const r of rexesEl.children) {
+    const [fEl, pEl] = r.children;
+    state.rexes.push({ field: fEl.value, pattern: pEl.value });
+  }
+  return state;
+}
+
+function restoreState(state) {
+  clearAll();
+  for (const [id, val] of Object.entries(state.scalar || {})) {
+    const el = document.getElementById(id);
+    if (el) el.value = val ?? '';
+  }
+  document.getElementById('f-pretty').checked = state.pretty !== false;
+  filtersEl.innerHTML = '';
+  statsEl.innerHTML = '';
+  evalsEl.innerHTML = '';
+  rexesEl.innerHTML = '';
+  (state.filters || []).forEach(f => addFilter(f.field, f.op, f.value));
+  (state.stats || []).forEach(s => addStatsRow(s.fn, s.field, s.alias));
+  (state.evals || []).forEach(e => addEval(e.name, e.expr));
+  (state.rexes || []).forEach(r => addRex(r.field, r.pattern));
+  updateTransformUI();
+  buildQuery();
+}
+
+function refreshSavedPicker() {
+  const list = readStore();
+  const sel = document.getElementById('savedPicker');
+  const prev = sel.value;
+  sel.innerHTML = '';
+  if (!list.length) {
+    const o = document.createElement('option');
+    o.value = ''; o.textContent = '— no saved searches yet —';
+    sel.appendChild(o);
+  } else {
+    const placeholder = document.createElement('option');
+    placeholder.value = ''; placeholder.textContent = `— pick one of ${list.length} —`;
+    sel.appendChild(placeholder);
+    list
+      .slice()
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .forEach(item => {
+        const o = document.createElement('option');
+        o.value = item.id;
+        o.textContent = item.name;
+        sel.appendChild(o);
+      });
+  }
+  if (prev) sel.value = prev;
+  document.getElementById('savedCount').textContent = `${list.length} saved`;
+  previewSaved();
+}
+
+function previewSaved() {
+  const id = document.getElementById('savedPicker').value;
+  const preview = document.getElementById('savedPreview');
+  if (!id) {
+    preview.innerHTML = 'Select a saved search above to preview its description and query.';
+    return;
+  }
+  const item = readStore().find(x => x.id === id);
+  if (!item) { preview.innerHTML = 'Saved search not found.'; return; }
+  const created = new Date(item.created).toLocaleString();
+  const desc = (item.description || '<em>(no description)</em>').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const query = (item.query || '').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  preview.innerHTML =
+    `<strong>${escapeHtml(item.name)}</strong> · saved ${created}<br/>` +
+    `<div style="margin:4px 0 6px 0; color: var(--fg-dim);">${desc}</div>` +
+    `<div style="color: var(--accent); white-space: pre-wrap;">${query}</div>`;
+}
+
+function escapeHtml(s) {
+  return String(s || '').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+}
+
+function loadSaved() {
+  const id = document.getElementById('savedPicker').value;
+  if (!id) { showToast('Pick a saved search first'); return; }
+  const item = readStore().find(x => x.id === id);
+  if (!item) { showToast('Saved search not found'); return; }
+  restoreState(item.state);
+  showToast(`Loaded "${item.name}"`);
+}
+
+function deleteSaved() {
+  const id = document.getElementById('savedPicker').value;
+  if (!id) { showToast('Pick a saved search first'); return; }
+  const list = readStore();
+  const item = list.find(x => x.id === id);
+  if (!item) return;
+  if (!confirm(`Delete saved search "${item.name}"? This can't be undone.`)) return;
+  writeStore(list.filter(x => x.id !== id));
+  refreshSavedPicker();
+  showToast('Deleted');
+}
+
+function openSaveModal() {
+  document.getElementById('saveName').value = '';
+  document.getElementById('saveDesc').value = '';
+  document.getElementById('saveModal').classList.add('show');
+  setTimeout(() => document.getElementById('saveName').focus(), 50);
+}
+function closeSaveModal() {
+  document.getElementById('saveModal').classList.remove('show');
+}
+document.getElementById('saveModal').addEventListener('click', e => {
+  if (e.target.id === 'saveModal') closeSaveModal();
+});
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') closeSaveModal();
+});
+
+function saveCurrent() {
+  const name = document.getElementById('saveName').value.trim();
+  const desc = document.getElementById('saveDesc').value.trim();
+  if (!name) { showToast('Name required'); return; }
+  const query = document.getElementById('output').innerText;
+  if (!query || query.startsWith('//')) {
+    if (!confirm('The generated query is empty. Save anyway?')) return;
+  }
+  const list = readStore();
+  const id = 'sv_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+  list.push({
+    id, name, description: desc,
+    created: new Date().toISOString(),
+    query: query.startsWith('//') ? '' : query,
+    state: captureState()
+  });
+  writeStore(list);
+  closeSaveModal();
+  refreshSavedPicker();
+  document.getElementById('savedPicker').value = id;
+  previewSaved();
+  showToast(`Saved "${name}"`);
+}
+
+function exportSaved() {
+  const list = readStore();
+  if (!list.length) { showToast('Nothing to export'); return; }
+  const blob = new Blob([JSON.stringify({
+    version: 1,
+    exported: new Date().toISOString(),
+    searches: list
+  }, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `spl-forge-saved-${new Date().toISOString().slice(0,10)}.json`;
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
+  showToast(`Exported ${list.length} search${list.length>1?'es':''}`);
+}
+
+function importSaved(ev) {
+  const file = ev.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const data = JSON.parse(reader.result);
+      const incoming = Array.isArray(data) ? data : (data.searches || []);
+      if (!incoming.length) { showToast('No searches found in file'); return; }
+      const existing = readStore();
+      const existingIds = new Set(existing.map(x => x.id));
+      let added = 0, skipped = 0;
+      incoming.forEach(item => {
+        if (!item || !item.name || !item.state) { skipped++; return; }
+        // give new IDs if collision
+        if (!item.id || existingIds.has(item.id)) {
+          item.id = 'sv_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+        }
+        existing.push(item); added++;
+      });
+      writeStore(existing);
+      refreshSavedPicker();
+      showToast(`Imported ${added}${skipped ? `, skipped ${skipped}` : ''}`);
+    } catch (e) {
+      showToast('Import failed — invalid JSON');
+      console.error(e);
+    } finally {
+      ev.target.value = '';
+    }
+  };
+  reader.readAsText(file);
+}
+
+/* ================= Tutorial copy buttons ================= */
+document.querySelectorAll('.spl-block').forEach(block => {
+  const btn = block.querySelector('.copy');
+  if (btn) {
+    btn.addEventListener('click', () => {
+      const spl = block.dataset.spl || block.innerText.replace(/^copy\n?/,'');
+      navigator.clipboard.writeText(spl).then(() => showToast('SPL copied'));
+    });
+  }
+});
+
+/* ================= TOC active-section highlight ================= */
+const tocLinks = document.querySelectorAll('.toc a');
+const lessons = document.querySelectorAll('article.lessons section');
+function onScroll() {
+  const scrollY = window.scrollY + 120;
+  let current = null;
+  lessons.forEach(s => { if (s.offsetTop <= scrollY) current = s.id; });
+  tocLinks.forEach(a => a.classList.toggle('active', a.getAttribute('href') === '#' + current));
+}
+window.addEventListener('scroll', onScroll, { passive: true });
+
+/* ================= Init ================= */
+// listeners for all inputs that don't have inline oninput
+['earliest','latest','customTime','f-index','f-sourcetype','f-source','f-host',
+ 'f-terms','transform-cmd','timechart-span','top-limit','f-groupby',
+ 'f-where','f-dedup','f-rename','f-table','f-sort','f-head','f-raw','f-pretty'
+].forEach(id => {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.addEventListener('input', buildQuery);
+  el.addEventListener('change', buildQuery);
+});
+
+// Start with one filter row and one stats row to show the pattern
+addFilter();
+addStatsRow();
+updateTransformUI();
+populateMaskOptions();
+buildQuery();
+refreshSavedPicker();
+</script>
+</body>
+</html>
